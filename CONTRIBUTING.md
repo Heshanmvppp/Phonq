@@ -1,0 +1,58 @@
+# Contributing to Phonq
+
+Thanks for wanting to help! Phonq is a free, open-source project — every contribution matters,
+from a typo fix to a whole feature.
+
+## Quick start
+
+```bash
+git clone https://github.com/Heshanmvppp/Phonq.git
+cd Phonq
+npm install
+cp .env.example .env   # fill in DATABASE_URL, JAMENDO_CLIENT_ID, AUTH_SECRET, AUTH_GOOGLE_*
+npx prisma migrate dev
+npm run dev
+```
+
+## Before you code
+
+- **Look for an existing issue** or open one describing what you want to do. Small PRs are easier
+  to review and merge.
+- Check [ROADMAP.md](ROADMAP.md) to see where things are headed and [TODO.md](TODO.md) for open tasks.
+- New to the codebase? Read [ARCHITECTURE.md](ARCHITECTURE.md) first — it's a 5-minute read.
+
+## Development workflow
+
+```bash
+# while working
+npm run dev
+
+# before pushing / opening a PR — these must pass
+npm run lint
+npm run typecheck
+npm run build
+```
+
+- Keep changes focused. One feature/fix per PR.
+- Follow existing conventions (see "Conventions" in ARCHITECTURE.md): server components fetch data,
+  mutations go through API routes, Tailwind 4 tokens, lucide-react icons.
+- Write clear commit messages in the existing style.
+
+## What needs help
+
+- **Docs** — README, ARCHITECTURE, FAQ content.
+- **Translations** — the UI has no i18n yet; adding it would be a great first big task.
+- **Features** — see the roadmap: artist/album pages, queue drag-and-drop, recommendations, stats.
+- **Bugs & polish** — anything in the issue tracker, plus performance and mobile UX.
+- **Testing** — Phonq has no automated tests yet; setting up Vitest + testing the API routes
+  and the player state machine would be extremely valuable.
+
+## Code of conduct
+
+Be kind. This is a volunteer project for the phonk community. Harassment, gatekeeping and
+unconstructive criticism are not welcome.
+
+## License
+
+By contributing you agree that your contributions are licensed under the same MIT license
+as the project. See [LICENSE](LICENSE).
