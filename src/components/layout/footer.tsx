@@ -11,8 +11,8 @@ import { marketingNav } from "@/content/site";
 export function Footer() {
   return (
     <footer className="border-t border-border bg-muted/30">
-      <div className="mx-auto max-w-screen-2xl px-4 py-12 sm:px-6">
-        <div className="grid gap-10 lg:grid-cols-5">
+      <div className="mx-auto max-w-screen-2xl px-4 py-12 sm:py-16 sm:px-6">
+        <div className="grid gap-6 sm:grid-cols-2 sm:gap-4 md:grid-cols-5 md:gap-6">
           <div className="lg:col-span-2">
             <Logo />
             <p className="mt-4 max-w-sm text-sm text-muted-foreground">
@@ -21,7 +21,7 @@ export function Footer() {
             </p>
             <div className="mt-5 flex items-center gap-2">
               <a
-                href="https://github.com/Heshanmvppp/Phonq"
+                href="https://github.com/hexsyro/Phonq"
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-2 rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -40,9 +40,9 @@ export function Footer() {
           </div>
 
           {marketingNav.map((group) => (
-            <div key={group.label}>
-              <p className="mb-3 text-sm font-semibold">{group.label}</p>
-              <ul className="space-y-2.5">
+            <div key={group.label} className="md:col-span-1">
+              <p className="mb-2.5 text-xs font-semibold uppercase tracking-widest text-muted-foreground">{group.label}</p>
+              <ul className="space-y-1.5">
                 {group.items.map((item) => (
                   <li key={item.href}>
                     <Link href={item.href} className="text-sm text-muted-foreground transition-colors hover:text-foreground">
