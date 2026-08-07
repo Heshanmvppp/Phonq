@@ -68,7 +68,7 @@ export default function TeamPage() {
             </p>
             <div className="mt-5 flex flex-wrap justify-center gap-3">
               <a
-                href="https://github.com/Heshanmvppp/Phonq"
+                href="https://github.com/hexsyro/Phonq"
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"

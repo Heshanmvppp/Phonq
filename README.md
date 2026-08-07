@@ -3,11 +3,11 @@
 <div align="center">
 
 [![MIT License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/Heshanmvppp/Phonq/ci.yml?label=CI&style=flat-square)](https://github.com/Heshanmvppp/Phonq/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/hexsyro/Phonq/ci.yml?label=CI&style=flat-square)](https://github.com/hexsyro/Phonq/actions)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue?style=flat-square)](https://typescriptlang.org)
 [![Neon](https://img.shields.io/badge/DB-Neon%20Postgres-00e599?style=flat-square)](https://neon.tech)
-[![Discussions](https://img.shields.io/badge/Discussions-open-8a63d2?style=flat-square)](https://github.com/Heshanmvppp/Phonq/discussions)
+[![Discussions](https://img.shields.io/badge/Discussions-open-8a63d2?style=flat-square)](https://github.com/hexsyro/Phonq/discussions)
 
 Phonq is a free, open-source music streaming platform built for the **phonk** community.
 Stream hundreds of thousands of **Creative Commons** tracks — legally, in full, forever free.
@@ -142,7 +142,7 @@ The first boot runs the migrations automatically and seeds the schema. See
 
 One-click deploy (prompts for the same env vars documented below):
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FHeshanmvppp%2FPhonq&project-name=phonq&env=DATABASE_URL%2CAUTH_SECRET%2CAUTH_GOOGLE_ID%2CAUTH_GOOGLE_SECRET%2CNEXT_PUBLIC_APP_URL)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fhexsyro%2FPhonq&project-name=phonq&env=DATABASE_URL%2CAUTH_SECRET%2CAUTH_GOOGLE_ID%2CAUTH_GOOGLE_SECRET%2CNEXT_PUBLIC_APP_URL)
 
 Or manually:
 
@@ -161,7 +161,7 @@ Phonq runs on free tiers and stays free forever:
 - **We never sell ads or data.** If you want to keep the lights on and the features coming,
   sponsoring is the best way to help:
 
-[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?style=flat-square)](https://github.com/sponsors/Heshanmvppp)
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?style=flat-square)](https://github.com/sponsors/hexsyro)
 
 ## 🤝 Contributing
 
@@ -170,14 +170,14 @@ Contributions are welcome — docs, translations, bug fixes, features. See
 the [security policy](SECURITY.md). In short:
 
 ```bash
-git clone https://github.com/Heshanmvppp/Phonq.git
+git clone https://github.com/hexsyro/Phonq
 cd Phonq && npm install
 # make your changes…
 npm run lint && npm run typecheck && npm test
 ```
 
 Questions and ideas are welcome on
-[GitHub Discussions](https://github.com/Heshanmvppp/Phonq/discussions).
+[GitHub Discussions](https://github.com/hexsyro/Phonq/discussions).
 
 ## 📄 License
 
@@ -187,5 +187,5 @@ MIT — see [LICENSE](LICENSE). Music is licensed by its artists under Creative 
 ---
 
 <div align="center">
-  <i>Built with ❤️ for the phonk community · <a href="https://github.com/Heshanmvppp">@Heshanmvppp</a></i>
+  <i>Built with ❤️ for the phonk community · <a href="https://github.com/hexsyro">@hexsyro</a></i>
 </div>

@@ -12,7 +12,7 @@ export const team: TeamMember[] = [
     role: "Founder & Lead Developer",
     avatar: "/images/team/heshan.jpg",
     bio: "Started Phonq in 2025 as a way to give the phonk scene a legal, free home. Builds the platform and most of the frontend.",
-    github: "Heshanmvppp",
+    github: "hexsyro",
   },
   {
     name: "Contributors",
