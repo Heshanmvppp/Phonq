@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 
 import { site } from "@/content/site";
-
+import { Analytics } from "@vercel/analytics/next"
 import { Providers } from "@/components/providers";
 
 import "@/app/globals.css";
@@ -46,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} ${spaceGrotesk.variable} bg-noise min-h-screen font-sans antialiased`}>
         <Providers>{children}</Providers>
+      <Analytics />
       </body>
     </html>
   );

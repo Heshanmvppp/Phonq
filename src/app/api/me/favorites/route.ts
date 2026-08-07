@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
-import { fetchTracksByIds } from "@/lib/jamendo";
+import { fetchTracksByIds } from "@/lib/catalog";
 
 import { badRequest, created, notFound, ok, unauthorized } from "@/lib/api";
 

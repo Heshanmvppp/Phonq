@@ -58,9 +58,13 @@ curl http://localhost:3000/api/health`,
 ];
 
 const endpoints = [
-  { method: "GET", path: "/api/health", description: "Service health check" },
-  { method: "GET", path: "/api/tracks?search=…&tags=…&boost=…", description: "Search and browse the Jamendo catalog" },
-  { method: "GET", path: "/api/radios", description: "Genre radios from Jamendo" },
+  { method: "GET", path: "/api/health", description: "Service health check + catalog status" },
+  { method: "GET", path: "/api/v1/tracks?tags=…&boost=…&limit=…", description: "Public catalog API (read-only, rate-limited)" },
+  { method: "GET", path: "/api/v1/search?q=…", description: "Public search API (read-only, rate-limited)" },
+  { method: "GET", path: "/api/tracks?search=…&tags=…&boost=…", description: "Search and browse the catalog (used by the app)" },
+  { method: "GET", path: "/api/radios", description: "Genre radios" },
+  { method: "GET", path: "/track/:id", description: "Public shareable track page (OG tags)" },
+  { method: "GET", path: "/embed/:id", description: "Minimal iframe-able player" },
   { method: "GET", path: "/api/me/favorites", description: "Your favorites (requires session cookie)" },
   { method: "POST", path: "/api/me/favorites", description: "Add a favorite — body { trackId }" },
   { method: "DELETE", path: "/api/me/favorites?trackId=…", description: "Remove a favorite" },
@@ -126,6 +130,42 @@ export default function DocsPage() {
               </div>
             ))}
           </Card>
+        </div>
+
+        <div className="mt-12 space-y-6 rounded-2xl border border-border bg-muted/30 p-6">
+          <div>
+            <h3 className="font-display text-lg font-semibold">Public API (v1)</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              Phonq exposes a thin, read-only catalog API. No key required — just a
+              per-IP rate limit of 30 requests/minute. Build phonk-adjacent tools on it.
+            </p>
+          </div>
+          <div>
+            <p className="text-sm font-semibold">Browse</p>
+            <pre className="mt-2 overflow-x-auto rounded-lg bg-muted/60 p-4 text-xs leading-relaxed text-foreground">
+{`curl "https://phonq.vercel.app/api/v1/tracks?tags=phonk&boost=popularity_week&limit=3"`}
+            </pre>
+          </div>
+          <div>
+            <p className="text-sm font-semibold">Search</p>
+            <pre className="mt-2 overflow-x-auto rounded-lg bg-muted/60 p-4 text-xs leading-relaxed text-foreground">
+{`curl "https://phonq.vercel.app/api/v1/search?q=drift&limit=5"
+
+→ 200 { "query": "drift", "tracks": [ …Track[]… ], "count": 5, "provider": "live" }`}
+            </pre>
+          </div>
+          <div>
+            <p className="text-sm font-semibold">Embed a player</p>
+            <pre className="mt-2 overflow-x-auto rounded-lg bg-muted/60 p-4 text-xs leading-relaxed text-foreground">
+{`<iframe src="https://phonq.vercel.app/embed/<track-id>" width="384" height="540" style="border:none" />`}
+            </pre>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Every catalog response includes a <code className="rounded bg-muted px-1 py-0.5">provider</code>{" "}
+            field: <code className="rounded bg-muted px-1 py-0.5">live</code> (Jamendo),
+            <code className="rounded bg-muted px-1 py-0.5">degraded</code> (Postgres cache) or
+            <code className="rounded bg-muted px-1 py-0.5"> static</code> (bundled snapshot).
+          </p>
         </div>
 
         <div className="mt-12 rounded-2xl border border-border bg-muted/30 p-6">

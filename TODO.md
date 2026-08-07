@@ -5,9 +5,10 @@
 
 ## Testing
 
-- [ ] Set up Vitest and test the API route handlers (favorites, playlists, history).
+- [x] Set up Vitest and test the API route handlers, catalog fallback ladder, utils, rate limiter.
 - [ ] Unit-test the player state machine (queue, shuffle, repeat, seek).
 - [ ] Component tests for LikeButton, AddToPlaylist, Dialog.
+- [ ] Integration tests for `/api/v1/*` against the static snapshot fallback.
 
 ## Features
 
@@ -15,9 +16,17 @@
 - [ ] Album pages: track listing, release date, cover.
 - [ ] Queue drag-and-drop reordering.
 - [ ] Personalized recommendations from listening history.
-- [ ] Download button with license badge where `audioDownloadAllowed`.
+- [x] Download button with license badge where `audioDownloadAllowed`.
 - [ ] PWA manifest + offline queue.
 - [ ] i18n (next-intl or similar).
+
+## Sharing & API
+
+- [x] Public shareable track page (`/track/[id]`) with OG tags.
+- [x] Embed player (`/embed/[id]`, frame-ancestors relaxed so it can be iframed).
+- [x] Public read-only API (`/api/v1/tracks`, `/api/v1/search`) — rate-limited, no key.
+- [ ] API tokens / OAuth for third-party apps; pagination cursors.
+- [ ] Webhooks or RSS for new releases.
 
 ## Polish
 
@@ -29,7 +38,14 @@
 
 ## Infrastructure
 
-- [ ] Database migrations committed to `prisma/migrations` (run `npx prisma migrate dev`).
-- [ ] GitHub Actions: also run `prisma migrate deploy`-style checks on CI.
+- [x] Database migrations committed to `prisma/migrations` (`0000_init`).
+- [x] GitHub Actions: lint, typecheck, tests, production build on CI.
+- [x] Self-hosting: `Dockerfile` + `docker-compose.yml` (migrate on boot).
 - [ ] Analytics: privacy-friendly, self-hosted (e.g. Plausible/Umami) — no third-party cookies.
 - [ ] Rate limiting on a shared store (Upstash Redis) for multi-instance deploys.
+
+## Repository / community
+
+- [ ] Enable GitHub Discussions, create "good first issue" labels on real issues.
+- [ ] Add real screenshots to `docs/screenshots/` (currently referenced as placeholders in README).
+- [ ] Move the second live provider (Free Music Archive / ccMixter) past the interface stub in `catalog.ts`.

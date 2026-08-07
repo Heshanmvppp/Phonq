@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { fetchTrendingPhonk } from "@/lib/jamendo";
+import { fetchTrendingPhonk } from "@/lib/catalog";
 
 import { SearchClient } from "./search-client";
 

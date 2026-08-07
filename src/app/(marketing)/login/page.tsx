@@ -2,8 +2,9 @@ import * as React from "react";
 
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ShieldCheck, CheckCircle2 } from "lucide-react";
+import { ShieldCheck, CheckCircle2, Mail } from "lucide-react";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
+import { EmailSignInForm } from "@/components/auth/email-sign-in-form";
 import { Logo } from "@/components/brand/logo";
 import { Card } from "@/components/ui/card";
 
@@ -27,6 +28,8 @@ const faqItems = [
 ];
 
 export default function LoginPage() {
+  const emailEnabled = Boolean(process.env.AUTH_RESEND_KEY);
+
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center px-4 py-16">
       <div
@@ -37,7 +40,7 @@ export default function LoginPage() {
         <Logo />
         <h1 className="mt-8 font-display text-3xl font-bold tracking-tight">Your music, everywhere</h1>
         <p className="mt-2 text-center text-muted-foreground">
-          Sign in with Google to sync your library. Takes 5 seconds, costs nothing.
+          Sign in with Google or an email link to sync your library. Takes 5 seconds, costs nothing.
         </p>
 
         <Card className="mt-8 w-full p-6">
@@ -77,6 +80,26 @@ export default function LoginPage() {
           <React.Suspense fallback={<div className="h-11 animate-pulse rounded-md bg-muted" />}>
             <GoogleSignInButton />
           </React.Suspense>
+
+          {emailEnabled ? (
+            <>
+              <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="h-px flex-1 bg-border" />
+                <span className="inline-flex items-center gap-1.5">
+                  <Mail className="size-3.5" /> or with email
+                </span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+
+              <React.Suspense fallback={<div className="h-11 animate-pulse rounded-md bg-muted" />}>
+                <EmailSignInForm />
+              </React.Suspense>
+            </>
+          ) : (
+            <p className="mt-6 text-center text-xs text-muted-foreground">
+              Email sign-in isn&apos;t enabled on this instance.
+            </p>
+          )}
 
           <div className="mt-6 flex items-center justify-center gap-3 text-xs text-muted-foreground">
             <ShieldCheck className="size-4" />

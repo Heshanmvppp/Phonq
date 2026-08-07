@@ -1,5 +1,6 @@
 import { Footer } from "@/components/layout/footer";
 import { MarketingNav } from "@/components/layout/marketing-nav";
+import { Analytics } from "@vercel/analytics/next"
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -7,6 +8,7 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
       <MarketingNav />
       <main className="flex-1">{children}</main>
       <Footer />
+      <Analytics />
     </div>
   );
 }

@@ -17,9 +17,20 @@ npm run dev
 ## Before you code
 
 - **Look for an existing issue** or open one describing what you want to do. Small PRs are easier
-  to review and merge.
+  to review and merge. Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.md) and
+  [feature request](.github/ISSUE_TEMPLATE/feature_request.md) templates.
 - Check [ROADMAP.md](ROADMAP.md) to see where things are headed and [TODO.md](TODO.md) for open tasks.
 - New to the codebase? Read [ARCHITECTURE.md](ARCHITECTURE.md) first — it's a 5-minute read.
+
+## Good first issues
+
+Want an easy on-ramp? Anything in the repo issues labelled `good first issue` is a great start.
+Suggested first tasks:
+
+- Improve an empty/error state with a retry button.
+- Add a keyboard shortcut or polish a piece of UI.
+- Write a unit test for a pure helper (`rate-limit`, `utils`, catalog fallback).
+- Fix a typo or improve the docs / FAQ copy.
 
 ## Development workflow
 
@@ -30,6 +41,7 @@ npm run dev
 # before pushing / opening a PR — these must pass
 npm run lint
 npm run typecheck
+npm test
 npm run build
 ```
 
@@ -37,6 +49,7 @@ npm run build
 - Follow existing conventions (see "Conventions" in ARCHITECTURE.md): server components fetch data,
   mutations go through API routes, Tailwind 4 tokens, lucide-react icons.
 - Write clear commit messages in the existing style.
+- Open a PR with [the template](.github/PULL_REQUEST_TEMPLATE.md) so reviewers know what to check.
 
 ## What needs help
 
@@ -44,8 +57,10 @@ npm run build
 - **Translations** — the UI has no i18n yet; adding it would be a great first big task.
 - **Features** — see the roadmap: artist/album pages, queue drag-and-drop, recommendations, stats.
 - **Bugs & polish** — anything in the issue tracker, plus performance and mobile UX.
-- **Testing** — Phonq has no automated tests yet; setting up Vitest + testing the API routes
-  and the player state machine would be extremely valuable.
+- **Testing** — extend the Vitest suite: the player state machine, API route handlers, and the
+  catalog fallback ladder all need more coverage.
+- **Catalog resilience** — the catalog layer (`src/lib/catalog.ts`) has a provider interface ready
+  for a second CC source (e.g. Free Music Archive or ccMixter) behind the same interface.
 
 ## Code of conduct
 

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { fetchFreshDrops, fetchRadios, fetchTrendingPhonk, fetchTracksByIds } from "@/lib/jamendo";
+import { fetchFreshDrops, fetchRadios, fetchTrendingPhonk, fetchTracksByIds } from "@/lib/catalog";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import type { Track } from "@/lib/jamendo";

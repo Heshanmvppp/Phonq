@@ -15,7 +15,7 @@ export const site = {
   description:
     "Phonq is a free, open-source music streaming platform built for the phonk community. Stream hundreds of thousands of Creative Commons tracks legally, in full, forever free.",
   url: process.env.NEXT_PUBLIC_APP_URL ?? "https://phonq.vercel.app",
-  github: "https://github.com/Heshanmvppp/Phonq",
+  github: "https://github.com/hexsyro/Phonq",
   email: "hello@phonq.app",
   jamendo: "https://www.jamendo.com",
 } as const;

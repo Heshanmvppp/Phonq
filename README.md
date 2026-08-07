@@ -3,9 +3,11 @@
 <div align="center">
 
 [![MIT License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/Heshanmvppp/Phonq/ci.yml?label=CI&style=flat-square)](https://github.com/Heshanmvppp/Phonq/actions)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue?style=flat-square)](https://typescriptlang.org)
 [![Neon](https://img.shields.io/badge/DB-Neon%20Postgres-00e599?style=flat-square)](https://neon.tech)
+[![Discussions](https://img.shields.io/badge/Discussions-open-8a63d2?style=flat-square)](https://github.com/Heshanmvppp/Phonq/discussions)
 
 Phonq is a free, open-source music streaming platform built for the **phonk** community.
 Stream hundreds of thousands of **Creative Commons** tracks — legally, in full, forever free.
@@ -26,6 +28,18 @@ Phonq streams the entire **Jamendo** catalog (500K+ CC-licensed tracks) with:
 
 And it's **100% open source** under the MIT license. Fork it, audit it, self-host it, or build on it.
 
+## 📸 Screenshots
+
+> The gallery below is filled with real captures from the player. Drop your own
+> `docs/screenshots/*.png` in and link them here.
+
+| Player + waveform | Search & library |
+| ----------------- | ---------------- |
+| ![Player](./docs/screenshots/player.png) | ![Search](./docs/screenshots/search.png) |
+
+> _Short GIFs of the live waveform / queue help too — see
+> [Contributing → Screenshots](CONTRIBUTING.md)._
+
 ## 🚀 Tech Stack
 
 | Layer     | Technology                                                        |
@@ -33,10 +47,11 @@ And it's **100% open source** under the MIT license. Fork it, audit it, self-hos
 | Framework | [Next.js 16](https://nextjs.org) (App Router, Turbopack)          |
 | Language  | TypeScript 5.9                                                    |
 | Styling   | Tailwind CSS 4 (OKLCH phonk-purple theme)                         |
-| Auth      | Auth.js v5 (NextAuth) + Google OAuth 2.0                          |
+| Auth      | Auth.js v5 (NextAuth) + Google OAuth 2.0 + email magic links       |
 | Database  | [Neon](https://neon.tech) PostgreSQL via Prisma 7 (driver adapter)|
-| Music     | [Jamendo API](https://developer.jamendo.com) — CC-licensed tracks |
-| Deploy    | Vercel (serverless, ready)                                        |
+| Music     | [Jamendo API](https://developer.jamendo.com) — CC-licensed tracks, cached in Postgres with a static fallback snapshot |
+| Deploy    | Vercel (serverless, ready) + Docker for self-hosting               |
+| Testing   | Vitest (unit + API route tests)                                    |
 
 ## 📁 Project Structure
 
@@ -90,8 +105,9 @@ npm run dev          # → http://localhost:3000
 
 > **Jamendo client_id**: Phonq cannot ship with a working public key — Jamendo suspends
 > shared test keys. Create your own (free, 2 minutes) at
-> [devportal.jamendo.com](https://devportal.jamendo.com). Without it, the catalog endpoints
-> return a friendly error and the app still renders.
+> [devportal.jamendo.com](https://devportal.jamendo.com). Without one, the app degrades
+> gracefully: it serves whatever is cached in Postgres, then a bundled static snapshot,
+> and surfaces a friendly "catalog is refreshing" message instead of a raw API error.
 
 ## 📦 Scripts
 
@@ -102,27 +118,66 @@ npm run dev          # → http://localhost:3000
 | `npm run start`       | Serve the production build             |
 | `npm run lint`        | ESLint                                 |
 | `npm run typecheck`   | `tsc --noEmit`                         |
+| `npm test`            | Run the Vitest suite                   |
+| `npm run sync:featured` | Refresh the static fallback snapshot with real Jamendo data |
 | `npm run db:generate` | `prisma generate`                      |
 | `npm run db:deploy`   | `prisma migrate deploy`                |
 | `npm run db:studio`   | Open Prisma Studio                     |
 
+## 🐳 Self-hosting with Docker
+
+The repo ships a `docker-compose.yml` that runs the app with a local Postgres — no
+Neon, no cloud, no cost:
+
+```bash
+cp .env.example .env    # pre-wired to the local Postgres already
+docker compose up --build
+# → http://localhost:3000
+```
+
+The first boot runs the migrations automatically and seeds the schema. See
+[.env.example](.env.example) for every variable.
+
 ## ☁️ Deploying to Vercel
+
+One-click deploy (prompts for the same env vars documented below):
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FHeshanmvppp%2FPhonq&project-name=phonq&env=DATABASE_URL%2CAUTH_SECRET%2CAUTH_GOOGLE_ID%2CAUTH_GOOGLE_SECRET%2CNEXT_PUBLIC_APP_URL)
+
+Or manually:
 
 1. Push this repo to GitHub and import it in Vercel.
 2. Add the same env vars as `.env` in **Project → Settings → Environment Variables**.
 3. Deploy. Run `npx prisma migrate deploy` once (via a Vercel build step or locally) to create the tables.
 
+## 💜 How this stays free
+
+Phonq runs on free tiers and stays free forever:
+
+- **Music** — the Jamendo API is free for non-commercial use; tracks are streamed straight
+  from their CDN (never through our servers).
+- **Database** — Neon's free tier easily covers the catalog cache and user library.
+- **Hosting** — Vercel's free tier (or your own Docker/Postgres box).
+- **We never sell ads or data.** If you want to keep the lights on and the features coming,
+  sponsoring is the best way to help:
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?style=flat-square)](https://github.com/sponsors/Heshanmvppp)
+
 ## 🤝 Contributing
 
 Contributions are welcome — docs, translations, bug fixes, features. See
-[CONTRIBUTING.md](CONTRIBUTING.md). In short:
+[CONTRIBUTING.md](CONTRIBUTING.md), the [Code of Conduct](CODE_OF_CONDUCT.md), and
+the [security policy](SECURITY.md). In short:
 
 ```bash
 git clone https://github.com/Heshanmvppp/Phonq.git
 cd Phonq && npm install
 # make your changes…
-npm run lint && npm run typecheck
+npm run lint && npm run typecheck && npm test
 ```
+
+Questions and ideas are welcome on
+[GitHub Discussions](https://github.com/Heshanmvppp/Phonq/discussions).
 
 ## 📄 License
 

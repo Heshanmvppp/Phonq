@@ -1,6 +1,6 @@
-import { fetchTracks, searchTracks } from "@/lib/jamendo";
+import { fetchTracks, searchTracks } from "@/lib/catalog";
 
-import { ok, serverError } from "@/lib/api";
+import { ok } from "@/lib/api";
 import { checkRateLimit, ipKey } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -29,13 +29,9 @@ export async function GET(request: Request) {
           offset,
         });
     return ok({ tracks });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    if (message.includes("Suspended") || message.includes("client_id")) {
-      return serverError(
-        "The Jamendo catalog is temporarily unavailable. Please set a valid JAMENDO_CLIENT_ID (get one free at devportal.jamendo.com).",
-      );
-    }
-    return serverError("Failed to load tracks from Jamendo.");
+  } catch {
+    // Upstream errors are logged inside the catalog layer. Never leak the raw
+    // message or env var names into user-facing copy.
+    return ok({ tracks: [], error: "Catalog is refreshing — check back shortly." });
   }
 }

@@ -1,6 +1,6 @@
-import { fetchRadios } from "@/lib/jamendo";
+import { fetchRadios } from "@/lib/catalog";
 
-import { ok, serverError } from "@/lib/api";
+import { ok } from "@/lib/api";
 import { checkRateLimit, ipKey } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +14,6 @@ export async function GET(request: Request) {
     const radios = await fetchRadios();
     return ok({ radios });
   } catch {
-    return serverError("Failed to load radios from Jamendo.");
+    return ok({ radios: [], error: "Catalog is refreshing — check back shortly." });
   }
 }

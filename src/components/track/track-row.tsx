@@ -4,7 +4,7 @@ import * as React from "react";
 
 import Image from "next/image";
 
-import { Music2, Pause, Play, Plus, X } from "lucide-react";
+import { Download, Music2, Pause, Play, Plus, X } from "lucide-react";
 
 import { usePlayer } from "@/components/player/player-context";
 import { LikeButton } from "@/components/track/like-button";
@@ -39,6 +39,7 @@ export function TrackRow({
   const isNowPlaying = isCurrent && isPlaying;
 
   function handlePlay() {
+    if (!track.audioUrl) return;
     if (isCurrent) {
       togglePlay();
       return;
@@ -103,6 +104,19 @@ export function TrackRow({
       </span>
 
       <div className="flex shrink-0 items-center gap-0.5">
+        {track.audioDownloadAllowed && track.downloadUrl && (
+          <a
+            href={track.downloadUrl}
+            target="_blank"
+            rel="noreferrer"
+            download
+            className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+            aria-label={`Download ${track.name}`}
+            title="Download (CC license)"
+          >
+            <Download className="size-4" />
+          </a>
+        )}
         {onAdd && (
           <button
             type="button"

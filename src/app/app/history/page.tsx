@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { History, Clock, TrendingUp } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { fetchTracksByIds, fetchTrendingPhonk } from "@/lib/jamendo";
+import { fetchTracksByIds, fetchTrendingPhonk } from "@/lib/catalog";
 import { Timeline } from "@/components/track/timeline";
 import { SectionHeading } from "@/components/marketing/section-heading";
 import { Card } from "@/components/ui/card";

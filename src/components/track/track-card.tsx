@@ -4,7 +4,7 @@ import * as React from "react";
 
 import Image from "next/image";
 
-import { Music2, Pause, Play } from "lucide-react";
+import { Download, Music2, Pause, Play } from "lucide-react";
 
 import { usePlayer } from "@/components/player/player-context";
 import { LikeButton } from "@/components/track/like-button";
@@ -26,6 +26,7 @@ export function TrackCard({ track, queue, index = 0, liked = false, className }:
   const isNowPlaying = isCurrent && isPlaying;
 
   function handlePlay() {
+    if (!track.audioUrl) return;
     if (isCurrent) {
       togglePlay();
       return;
@@ -73,7 +74,21 @@ export function TrackCard({ track, queue, index = 0, liked = false, className }:
           </span>
         )}
 
-        <div className="absolute bottom-2 right-2 translate-y-2 opacity-0 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100">
+        <div className="absolute bottom-2 right-2 flex translate-y-2 items-center gap-1.5 opacity-0 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100">
+          {track.audioDownloadAllowed && track.downloadUrl && (
+            <a
+              href={track.downloadUrl}
+              target="_blank"
+              rel="noreferrer"
+              download
+              onClick={(e) => e.stopPropagation()}
+              className="flex size-10 items-center justify-center rounded-full bg-black/70 text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/90"
+              aria-label={`Download ${track.name}`}
+              title="Download (CC license)"
+            >
+              <Download className="size-4" />
+            </a>
+          )}
           <button
             type="button"
             onClick={handlePlay}

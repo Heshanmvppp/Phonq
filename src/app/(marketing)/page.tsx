@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 
 import Link from "next/link";
 
-import { ArrowRight, AudioLines, Heart, ListMusic, Music2, Radio, Waves } from "lucide-react";
+import { ArrowRight, AudioLines, Heart, ListMusic, Music2, Radio, RefreshCw, Waves } from "lucide-react";
 
-import { fetchFreshDrops } from "@/lib/jamendo";
+import { fetchFreshDrops, getCatalogStatus } from "@/lib/catalog";
 
 import { site } from "@/content/site";
 
@@ -49,13 +49,20 @@ const valueProps = [
 
 export default async function HomePage() {
   let fresh: Awaited<ReturnType<typeof fetchFreshDrops>> | null = null;
-  let error: string | null = null;
+  let catalogStatus: Awaited<ReturnType<typeof getCatalogStatus>> | null = null;
 
   try {
     fresh = await fetchFreshDrops(12);
-  } catch (err) {
-    error = err instanceof Error ? err.message : "Unknown error";
+  } catch {
+    fresh = [];
   }
+  try {
+    catalogStatus = await getCatalogStatus();
+  } catch {
+    catalogStatus = null;
+  }
+
+  const degraded = catalogStatus?.provider !== "live";
 
   return (
     <>
@@ -126,26 +133,25 @@ export default async function HomePage() {
         </div>
 
         <div className="mt-8">
-          {error ? (
-            <Card className="p-8 text-center">
+          {fresh.length === 0 ? (
+            <Card className="p-10 text-center">
               <p className="text-sm text-muted-foreground">
-                The Jamendo catalog is temporarily unavailable ({error}). Add a valid{" "}
-                <code className="rounded bg-muted px-1.5 py-0.5 text-xs">JAMENDO_CLIENT_ID</code> from{" "}
-                <a
-                  href="https://devportal.jamendo.com"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-primary underline underline-offset-2"
-                >
-                  devportal.jamendo.com
-                </a>{" "}
-                and we&apos;ll be back in business.
+                The catalog is refreshing — check back shortly.
               </p>
             </Card>
           ) : (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-              {fresh?.map((track) => <TrackCard key={track.id} track={track} />)}
-            </div>
+            <>
+              {degraded && (
+                <p className="mb-4 flex items-center justify-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-2.5 text-center text-xs text-amber-700 dark:text-amber-400">
+                  <RefreshCw className="size-3.5" />
+                  We&apos;re serving a cached catalog while the live feed catches up. Streaming may be
+                  limited until it&apos;s back.
+                </p>
+              )}
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+                {fresh.map((track) => <TrackCard key={track.id} track={track} />)}
+              </div>
+            </>
           )}
         </div>
       </section>

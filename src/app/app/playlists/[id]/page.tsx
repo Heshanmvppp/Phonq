@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { fetchTracksByIds } from "@/lib/jamendo";
+import { fetchTracksByIds } from "@/lib/catalog";
 
 import { PlaylistTracks } from "./playlist-tracks";
 import { PlaylistActions } from "./playlist-actions";

@@ -1,0 +1,50 @@
+# Self-host Phonq with a local Postgres. No cloud, no cost.
+#
+#   cp .env.example .env
+#   docker compose up --build
+#   → http://localhost:3000
+#
+# The app service only requires DATABASE_URL + AUTH_SECRET to boot. Everything
+# else is optional: without JAMENDO_CLIENT_ID the catalog falls back to the
+# cached/static snapshot, and without the Google/email keys sign-in just shows
+# the providers you configured.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: phonq
+      POSTGRES_PASSWORD: phonq
+      POSTGRES_DB: phonq
+    ports:
+      - "5432:5432"
+    volumes:
+      - phonq_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phonq -d phonq"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "postgresql://phonq:phonq@db:5432/phonq?sslmode=disable"
+      AUTH_SECRET: "${AUTH_SECRET:-change-me-in-production}"
+      AUTH_TRUST_HOST: "true"
+      AUTH_GOOGLE_ID: "${AUTH_GOOGLE_ID:-}"
+      AUTH_GOOGLE_SECRET: "${AUTH_GOOGLE_SECRET:-}"
+      AUTH_RESEND_KEY: "${AUTH_RESEND_KEY:-}"
+      AUTH_EMAIL_FROM: "${AUTH_EMAIL_FROM:-noreply@phonq.app}"
+      NEXT_PUBLIC_APP_URL: "${NEXT_PUBLIC_APP_URL:-http://localhost:3000}"
+      JAMENDO_CLIENT_ID: "${JAMENDO_CLIENT_ID:-}"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  phonq_db:

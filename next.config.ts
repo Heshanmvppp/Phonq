@@ -30,7 +30,17 @@ const nextConfig: NextConfig = {
     ],
   },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // The embed player is designed to be iframed — relax framing + CSP for it.
+      {
+        source: "/embed/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: "frame-ancestors *" },
+          { key: "X-Frame-Options", value: "ALLOWALL" },
+        ],
+      },
+    ];
   },
 };
 

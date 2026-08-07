@@ -9,15 +9,20 @@ new contributor a mental model in five minutes.
 Browser
    │
    ├─ Public site (App Router) ─── /, /login, /product/*, /resources/*, /company/*, /legal/*
-   ├─ Authenticated app ────────── /app/*  (requires Google OAuth session)
-   └─ REST API ─────────────────── /api/*
+   ├─ Public share/embed ───────── /track/[id], /embed/[id]
+   ├─ Authenticated app ────────── /app/*  (requires Google OAuth or email magic link)
+   └─ REST API ─────────────────── /api/*, /api/v1/*
             │
-            ├─ Jamendo API (https://api.jamendo.com/v3.0) ── audio streams + track metadata
+            ├─ Catalog layer (src/lib/catalog.ts)
+            │     ├─ Jamendo API (https://api.jamendo.com/v3.0) ── audio streams + metadata
+            │     ├─ Postgres `cached_tracks` ── cache when upstream fails
+            │     └─ Bundled static snapshot ── always-on fallback
             └─ Neon PostgreSQL (via Prisma + @prisma/adapter-neon) ── user data
 ```
 
 Music never touches our servers. The browser fetches audio streams directly from Jamendo's CDN,
-which is what makes serving the whole catalog effectively free.
+which is what makes serving the whole catalog effectively free. Playback therefore survives
+upstream outages — only the metadata feed degrades, falling back in a ladder (below).
 
 ## Folders
 
@@ -25,26 +30,32 @@ which is what makes serving the whole catalog effectively free.
 | ------------------- | --------------------------------------------------------- |
 | `src/app/(marketing)`| Public pages. Split into `product`, `resources`, `company`, `legal` groups. |
 | `src/app/app`       | The authenticated player app (`/app/…`). Protected by `layout.tsx` via `auth()`. |
-| `src/app/api`       | Route handlers. Public: `tracks`, `radios`, `health`. Authenticated: `me/*`. |
+| `src/app/track` / `src/app/embed` | Public shareable track page (OG tags) and iframe-able embed player. |
+| `src/app/api`       | Route handlers. Public: `v1/tracks`, `v1/search`, `tracks`, `radios`, `health`. Authenticated: `me/*`. |
 | `src/components/player` | Global audio engine. `PlayerProvider` owns the `<audio>` element and queue state. |
-| `src/components/track`  | Track cards/rows + favorite/playlist actions. |
+| `src/components/embed` | Minimal client player used by the `/embed/[id]` route. |
+| `src/components/track`  | Track cards/rows + favorite/playlist/share actions. |
 | `src/components/ui`     | Minimal design-system primitives (no component library). |
-| `src/lib`           | `jamendo.ts` (API client), `auth.ts`, `prisma.ts`, `rate-limit.ts`, `api.ts`, `utils.ts`. |
-| `src/content`       | Typed content for the marketing site (features, FAQ, legal, blog, roadmap…). |
+| `src/lib`           | `catalog.ts` (resilient catalog layer), `jamendo.ts` (upstream client), `auth.ts`, `prisma.ts`, `rate-limit.ts`, `api.ts`, `utils.ts`. |
+| `src/content`       | Typed content for the marketing site + the bundled `featured-tracks`/`featured-radios` fallback. |
 
 ## Data model
 
 `prisma/schema.prisma` uses `@@map` (snake_case tables) and a `prisma-client` generator that
 outputs to `src/generated/prisma`. Tables:
 
-- `users` — from Google OAuth (name, email, image)
+- `users` — from Google OAuth or email magic link (name, email, image)
 - `accounts` / `sessions` / `verification_tokens` — Auth.js standard
 - `playlists` + `playlist_tracks` — user collections, ordered by `position`
 - `favorites` — liked tracks
 - `listens` — history (one row per user+track, updated with progress)
+- `cached_tracks` — last successful catalog responses (track lists), for the cache tier
+- `catalog_status` — single row recording last success/failure and the current provider
 
-The catalog itself is **not** in the database. Track data comes from Jamendo on demand and is
-cached in-memory for 10 minutes.
+The catalog is **not** a primary store. It lives on Jamendo, and Phonq degrades in a ladder:
+live Jamendo → `cached_tracks` (Postgres, written throttled on success) → bundled static
+snapshot in `src/content/featured-tracks.ts`. `getCatalogStatus()` reflects the active provider
+and never lets upstream error strings reach the UI (errors are logged server-side only).
 
 ## The player (`player-context.tsx`)
 
@@ -60,8 +71,10 @@ cached in-memory for 10 minutes.
 
 | Route                          | Auth | Purpose                            |
 | ------------------------------ | ---- | ---------------------------------- |
-| `GET /api/health`              | no   | Uptime check                       |
-| `GET /api/tracks`              | no   | Search/browse Jamendo (rate-limited) |
+| `GET /api/v1/tracks`           | no   | Public read-only catalog API (rate-limited) |
+| `GET /api/v1/search`           | no   | Public read-only search API (rate-limited) |
+| `GET /api/health`              | no   | Uptime check + current catalog provider |
+| `GET /api/tracks`              | no   | Search/browse catalog (rate-limited) |
 | `GET /api/radios`              | no   | Genre radios                       |
 | `GET|POST /api/me/favorites`   | yes  | List / add favorites               |
 | `DELETE /api/me/favorites`     | yes  | Remove favorite (`trackId`)        |
@@ -72,11 +85,11 @@ cached in-memory for 10 minutes.
 | `POST /api/me/delete`          | yes  | Delete all library data            |
 
 All `/api/me/*` routes resolve the session with `auth()` and reject with `401` when missing.
-Public Jamendo-facing routes are rate-limited with a fixed-window in-memory limiter.
+Public routes are rate-limited with a fixed-window in-memory limiter.
 
 ## Conventions
 
-- Server components fetch data directly (`auth()`, `prisma`, `jamendo.ts`) — no fetching layer.
+- Server components fetch data directly (`auth()`, `prisma`, `catalog.ts`) — no fetching layer.
 - Client components talk to the API with `fetch` and `router.refresh()` after mutations.
 - Mutations live behind routes; pages stay `"use server"` by default.
 - Styling uses Tailwind 4 CSS-first config (`@theme` tokens in `globals.css`), OKLCH colors.

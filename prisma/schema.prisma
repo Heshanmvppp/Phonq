@@ -114,3 +114,54 @@ model Listen {
   @@unique([userId, trackId])
   @@map("listens")
 }
+
+/// Offline catalog cache. Tracks are upserted on every successful live fetch
+/// so the app can keep serving a "smaller catalog" if the upstream API goes
+/// down (Jamendo suspensions, network failures, rate limits).
+model CachedTrack {
+  id                   String   @id
+  name                 String
+  duration             Int      @default(0)
+  artistId             String?
+  artistName           String   @default("Unknown Artist")
+  albumId              String?
+  albumName            String   @default("Unknown Album")
+  audioUrl             String   @default("")
+  downloadUrl          String?
+  image                String?
+  imageSmall           String?
+  licenseName          String?
+  genre                String?
+  bpm                  Int?
+  speed                String?
+  vocalInstrumental    String?
+  tags                 String?
+  popularityWeek       Int      @default(0)
+  popularityTotal      Int      @default(0)
+  listensTotal         Int      @default(0)
+  downloadsTotal       Int      @default(0)
+  releaseDate          String?
+  audioDownloadAllowed Boolean  @default(false)
+  source               String   @default("jamendo")
+  cachedAt             DateTime @default(now())
+
+  @@index([cachedAt])
+  @@index([artistName])
+  @@map("cached_tracks")
+}
+
+/// Single-row catalog health/status flag. Lets the frontend and /api/health
+/// report "live | degraded | static" so clients can surface cached/fallback
+/// content proactively instead of waiting for a failed request.
+model CatalogStatus {
+  id          Int       @id @default(1)
+  provider    String    @default("live") // "live" | "degraded" | "static"
+  cacheCount  Int       @default(0)
+  lastSuccess DateTime?
+  lastFailure DateTime?
+  error       String?
+  radios      Json?
+  updatedAt   DateTime  @updatedAt
+
+  @@map("catalog_status")
+}
