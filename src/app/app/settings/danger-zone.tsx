@@ -2,8 +2,6 @@
 
 import * as React from "react";
 
-import { useRouter } from "next/navigation";
-
 import { signOut } from "next-auth/react";
 
 import { AlertTriangle, Trash2 } from "lucide-react";
@@ -12,17 +10,24 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 export function DangerZone() {
-  const router = useRouter();
   const [busy, setBusy] = React.useState(false);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
   async function deleteData() {
     if (busy) return;
     setBusy(true);
+    setError(null);
     try {
-      await fetch("/api/me/delete", { method: "POST" });
+      const res = await fetch("/api/me/delete", { method: "POST" });
+      if (!res.ok) {
+        setError("Couldn't delete your data. Please try again.");
+        setBusy(false);
+        return;
+      }
       await signOut({ callbackUrl: "/" });
     } catch {
+      setError("Couldn't delete your data. Please try again.");
       setBusy(false);
     }
   }
@@ -56,9 +61,10 @@ export function DangerZone() {
               Cancel
             </Button>
           </div>
+          {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
         </div>
       ) : (
-        <Button size="sm" variant="destructive" className="mt-4" onClick={() => setConfirmOpen(true)}>
+        <Button size="sm" variant="destructive" className="mt-4" onClick={() => { setError(null); setConfirmOpen(true); }}>
           Delete my data
         </Button>
       )}

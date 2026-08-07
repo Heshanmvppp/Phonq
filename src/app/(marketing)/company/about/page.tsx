@@ -91,7 +91,7 @@ export default function AboutPage() {
           </div>
         </div>
 
-        <div className="mt-16 rounded-2xl border border-primary/20 bg-gradient-to-br from-violet-950/60 to-background p-8 text-center">
+        <div className="mt-16 rounded-2xl border border-primary/20 bg-primary/[0.04] p-8 text-center">
           <Music2 className="mx-auto size-8 text-primary" />
           <h2 className="mt-3 font-display text-2xl font-bold">Want to be part of it?</h2>
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">

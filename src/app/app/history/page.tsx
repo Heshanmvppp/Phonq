@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
-
-import { History } from "lucide-react";
-
+import { History, Clock, TrendingUp } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { fetchTracksByIds } from "@/lib/jamendo";
-
-import { TrackRow } from "@/components/track/track-row";
+import { fetchTracksByIds, fetchTrendingPhonk } from "@/lib/jamendo";
+import { Timeline } from "@/components/track/timeline";
 import { SectionHeading } from "@/components/marketing/section-heading";
+import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { groupByDate } from "@/lib/utils";
 
 export const metadata: Metadata = {
   title: "History",
@@ -19,20 +19,33 @@ export default async function HistoryPage() {
   const session = await auth();
   if (!session?.user?.id) return null;
 
-  const listens = await prisma.listen.findMany({
-    where: { userId: session.user.id },
-    orderBy: { listenedAt: "desc" },
-    take: 100,
-    select: { trackId: true, listenedAt: true },
-  });
+  const [listens, recentTrending] = await Promise.all([
+    prisma.listen.findMany({
+      where: { userId: session.user.id },
+      orderBy: { listenedAt: "desc" },
+      take: 100,
+      select: { trackId: true, listenedAt: true },
+    }),
+    fetchTrendingPhonk(8).catch(() => []),
+  ]);
 
   const uniqueIds = [...new Set(listens.map((l) => l.trackId))];
   const tracks = await fetchTracksByIds(uniqueIds);
   const byId = new Map(tracks.map((t) => [t.id, t]));
 
-  const rows = listens
-    .map((listen) => ({ track: byId.get(listen.trackId) }))
-    .filter((row): row is { track: NonNullable<typeof row.track> } => Boolean(row.track));
+  const timelineItems = listens
+    .map((listen) => {
+      const track = byId.get(listen.trackId);
+      if (!track) return null;
+      return {
+        id: `${track.id}-${listen.listenedAt.getTime()}`,
+        track,
+        timestamp: listen.listenedAt,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+
+  const groups = groupByDate(timelineItems, (item) => item.timestamp);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -40,22 +53,41 @@ export default async function HistoryPage() {
         align="left"
         eyebrow="Library"
         title="Listening history"
-        description="Everything you've played, most recent first."
+        description="Everything you&apos;ve played, most recent first."
       />
 
-      {rows.length === 0 ? (
-        <div className="mt-10 flex flex-col items-center gap-3 rounded-xl border border-dashed p-12 text-center">
-          <History className="size-8 text-muted-foreground/50" />
-          <p className="font-display text-lg font-semibold">No history yet</p>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            Play some tracks and they&apos;ll show up here.
-          </p>
+      {groups.length === 0 ? (
+        <div className="mt-10">
+          <EmptyState
+            icon={History}
+            title="No history yet"
+            description="Play some tracks and they'll show up here. Your recently played list will appear as a visual timeline."
+          >
+            {recentTrending.length > 0 && (
+              <div className="mt-4 w-full">
+                <div className="mb-4 flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <TrendingUp className="size-4" />
+                  <span>Trending now</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {recentTrending.map((track) => (
+                    <Card key={track.id} className="p-3">
+                      <p className="truncate text-xs font-medium">{track.name}</p>
+                      <p className="text-xs text-muted-foreground">{track.artistName}</p>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+          </EmptyState>
         </div>
       ) : (
-        <div className="mt-8 flex flex-col gap-1">
-          {rows.map((row, index) => (
-            <TrackRow key={`${row.track.id}-${index}`} track={row.track} queue={rows.map((r) => r.track)} index={index} showPosition />
-          ))}
+        <div className="mt-8">
+          <div className="mb-6 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <Clock className="size-4" />
+            <span>Recent activity</span>
+          </div>
+          <Timeline groups={groups} />
         </div>
       )}
     </div>

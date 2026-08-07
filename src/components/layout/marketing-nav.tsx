@@ -75,7 +75,7 @@ export function MarketingNav() {
                 Sign in
               </Button>
               <Button size="sm" onClick={() => router.push("/login")}>
-                Get started
+                Start listening
               </Button>
             </>
           )}

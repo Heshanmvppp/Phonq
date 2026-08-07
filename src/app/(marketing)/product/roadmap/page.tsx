@@ -8,8 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
 export const metadata: Metadata = {
-  title: "Roadmap",
-  description: "What we're building next — and what's already shipped.",
+  title: "Phonq Roadmap — Future Features & Development Plans",
+  description: "See what's coming next for Phonq: artist pages, album discographies, queue drag-and-drop, personalized recommendations, and more free music features.",
 };
 
 const statusStyles: Record<string, string> = {

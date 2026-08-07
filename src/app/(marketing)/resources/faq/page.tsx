@@ -8,9 +8,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 export const metadata: Metadata = {
-  title: "FAQ",
-  description: "Quick answers to common questions about Phonq, licensing, accounts and more.",
-};
+  title: "Phonq FAQ — Answers to Common Questions",
+  description: "Find answers to frequently asked questions about Phonq: streaming, licensing, downloads, account setup, technical issues, and how to contribute.",
+}
 
 export default function FaqPage() {
   return (

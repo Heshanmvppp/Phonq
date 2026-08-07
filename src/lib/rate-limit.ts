@@ -23,7 +23,17 @@ export function checkRateLimit(
   return entry.count <= limit;
 }
 
+/**
+ * Returns a stable key for the caller of a request.
+ *
+ * Prefers `x-real-ip` (set by nginx/caddy and other proxies, overwritten on
+ * every hop, so it cannot be spoofed by the client). Falls back to the first
+ * `x-forwarded-for` entry, which is only trustworthy when the platform proxy
+ * overwrites the header (e.g. Vercel). Best-effort per-instance.
+ */
 export function ipKey(request: Request): string {
+  const realIp = request.headers.get("x-real-ip");
+  if (realIp) return realIp;
   const forwarded = request.headers.get("x-forwarded-for");
   const ip = forwarded ? forwarded.split(",")[0]?.trim() : "unknown";
   return ip || "unknown";

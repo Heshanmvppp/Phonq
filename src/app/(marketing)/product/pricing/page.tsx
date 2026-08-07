@@ -35,7 +35,7 @@ export default function PricingPage() {
       <div className="mx-auto max-w-screen-2xl px-4 py-16 sm:px-6">
         <div className="mx-auto max-w-lg">
           <Card className="relative overflow-hidden border-primary/30 p-8">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-violet-500 via-fuchsia-500 to-orange-500" />
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-primary/40 via-primary to-primary/40" />
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-primary">
               <Heart className="size-4" />
               For everyone

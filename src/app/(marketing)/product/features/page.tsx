@@ -8,8 +8,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 export const metadata: Metadata = {
-  title: "Features",
-  description: "Everything Phonq has to offer — the player, discovery, community and open source.",
+  title: "Phonq Features — Free Music Player with Live Waveform Visualization",
+  description: "Explore Phonq's complete free music player features: full-length streaming, live waveform visualization, playlist management, genre radio, and open source. No ads, no cost.",
 };
 
 export default function FeaturesPage() {

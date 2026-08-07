@@ -21,15 +21,15 @@ export function ThemeToggle() {
       }
     >
       <DropdownMenuLabel>Theme</DropdownMenuLabel>
-      <DropdownMenuItem onClick={() => setTheme("dark")}>
-        <Sun className="text-muted-foreground" /> Dark
+      <DropdownMenuItem icon={<Sun />} onClick={() => setTheme("dark")}>
+        Dark
       </DropdownMenuItem>
-      <DropdownMenuItem onClick={() => setTheme("light")}>
-        <Moon className="text-muted-foreground" /> Light
+      <DropdownMenuItem icon={<Moon />} onClick={() => setTheme("light")}>
+        Light
       </DropdownMenuItem>
       <DropdownMenuSeparator />
-      <DropdownMenuItem onClick={() => setTheme("system")}>
-        <Laptop className="text-muted-foreground" /> System
+      <DropdownMenuItem icon={<Laptop />} onClick={() => setTheme("system")}>
+        System
       </DropdownMenuItem>
     </DropdownMenu>
   );

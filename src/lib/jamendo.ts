@@ -88,7 +88,6 @@ export interface Radio {
 }
 
 export const JAMENDO_BASE_URL = "https://api.jamendo.com/v3.0";
-export const JAMENDO_TEST_CLIENT_ID = "709fa152";
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
 type CacheEntry = { expiresAt: number; data: unknown };

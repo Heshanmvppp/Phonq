@@ -53,10 +53,12 @@ export function Waveform({ className }: { className?: string }) {
 
       const barWidth = width / BAR_COUNT;
       const gap = Math.max(1, barWidth * 0.3);
+      const rootStyles = getComputedStyle(document.documentElement);
+      const primary = rootStyles.getPropertyValue("--primary").trim() || "oklch(0.62 0.19 300)";
       const gradient = ctx.createLinearGradient(0, 0, width, 0);
-      gradient.addColorStop(0, "#a855f7");
-      gradient.addColorStop(0.6, "#ec4899");
-      gradient.addColorStop(1, "#f97316");
+      gradient.addColorStop(0, `color-mix(in oklab, ${primary} 55%, white)`);
+      gradient.addColorStop(0.55, primary);
+      gradient.addColorStop(1, `color-mix(in oklab, ${primary} 72%, black)`);
       ctx.fillStyle = gradient;
 
       for (let i = 0; i < BAR_COUNT; i += 1) {

@@ -4,6 +4,16 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
+interface MenuContextValue {
+  registerItem: (element: HTMLButtonElement) => void;
+  unregisterItem: (element: HTMLButtonElement) => void;
+  moveFocus: (direction: 1 | -1) => void;
+  moveFocusTo: (index: number) => void;
+  close: () => void;
+}
+
+const MenuContext = React.createContext<MenuContextValue | null>(null);
+
 interface DropdownMenuProps {
   trigger: React.ReactNode;
   children: React.ReactNode;
@@ -12,43 +22,102 @@ interface DropdownMenuProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-const MenuContext = React.createContext<{ close: () => void } | null>(null);
-
 export function DropdownMenu({ trigger, children, align = "end", className, onOpenChange }: DropdownMenuProps) {
   const [open, setOpen] = React.useState(false);
   const rootRef = React.useRef<HTMLDivElement>(null);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const itemRefs = React.useRef<HTMLButtonElement[]>([]);
+  const onOpenChangeRef = React.useRef(onOpenChange);
+
+  React.useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  }, [onOpenChange]);
+
+  function setOpenState(next: boolean) {
+    setOpen(next);
+    onOpenChangeRef.current?.(next);
+  }
+
+  function toggle() {
+    setOpenState(!open);
+  }
 
   React.useEffect(() => {
     if (!open) return;
-    function onPointerDown(event: MouseEvent) {
+
+    const onPointerDown = (event: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
+        setOpenState(false);
       }
-    }
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
+    };
+
+    const trigger = triggerRef.current;
+
     document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
+    const frame = requestAnimationFrame(() => {
+      itemRefs.current[0]?.focus();
+    });
+
     return () => {
+      cancelAnimationFrame(frame);
       document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
+      trigger?.focus();
     };
   }, [open]);
 
-  function toggle() {
-    const next = !open;
-    setOpen(next);
-    onOpenChange?.(next);
+  const registerItem = React.useCallback((element: HTMLButtonElement) => {
+    itemRefs.current.push(element);
+  }, []);
+
+  const unregisterItem = React.useCallback((element: HTMLButtonElement) => {
+    itemRefs.current = itemRefs.current.filter((el) => el !== element);
+  }, []);
+
+  const moveFocus = React.useCallback((direction: 1 | -1) => {
+    const items = itemRefs.current;
+    if (items.length === 0) return;
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex = (currentIndex + direction + items.length) % items.length;
+    items[nextIndex]?.focus();
+  }, []);
+
+  const moveFocusTo = React.useCallback((index: number) => {
+    const items = itemRefs.current;
+    items[index < 0 ? items.length - 1 : index]?.focus();
+  }, []);
+
+  const close = React.useCallback(() => setOpenState(false), []);
+
+  const contextValue = React.useMemo<MenuContextValue>(
+    () => ({ registerItem, unregisterItem, moveFocus, moveFocusTo, close }),
+    [registerItem, unregisterItem, moveFocus, moveFocusTo, close],
+  );
+
+  function handleTriggerKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggle();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) setOpenState(true);
+    }
   }
 
   return (
     <div ref={rootRef} className="relative inline-block">
-      <div onClick={toggle} className="cursor-pointer">
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={toggle}
+        onKeyDown={handleTriggerKeyDown}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="cursor-pointer appearance-none rounded-md border-0 bg-transparent p-0 font-inherit text-inherit outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      >
         {trigger}
-      </div>
+      </button>
       {open && (
-        <MenuContext.Provider value={{ close: () => setOpen(false) }}>
+        <MenuContext.Provider value={contextValue}>
           <div
             className={cn(
               "absolute z-50 mt-2 min-w-48 overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl animate-fade-up",
@@ -71,18 +140,49 @@ export interface DropdownMenuItemProps extends React.ButtonHTMLAttributes<HTMLBu
 
 export function DropdownMenuItem({ className, icon, destructive, children, onClick, ...props }: DropdownMenuItemProps) {
   const menu = React.useContext(MenuContext);
+  const ref = React.useRef<HTMLButtonElement>(null);
+
+  React.useEffect(() => {
+    if (!menu || !ref.current) return;
+    const element = ref.current;
+    menu.registerItem(element);
+    return () => menu.unregisterItem(element);
+  }, [menu]);
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (!menu) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      menu.moveFocus(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      menu.moveFocus(-1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      menu.moveFocusTo(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      menu.moveFocusTo(-1);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      menu.close();
+    }
+  }
+
   return (
     <button
+      ref={ref}
       type="button"
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm outline-none transition-colors hover:bg-muted",
-        destructive ? "text-destructive hover:bg-destructive/10" : "text-foreground",
+        "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:bg-muted",
+        destructive ? "text-destructive hover:bg-destructive/10 focus-visible:bg-destructive/10" : "text-foreground",
         className,
       )}
       onClick={(event) => {
         menu?.close();
         onClick?.(event);
       }}
+      onKeyDown={handleKeyDown}
       {...props}
     >
       {icon && <span className="shrink-0 text-muted-foreground [&>svg]:size-4">{icon}</span>}

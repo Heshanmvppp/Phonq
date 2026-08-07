@@ -7,8 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
 export const metadata: Metadata = {
-  title: "Changelog",
-  description: "What's new in Phonq — releases, fixes and improvements.",
+  title: "Phonq Changelog — Updates, Features & Improvements",
+  description: "See the latest Phonq updates: new features, bug fixes, and improvements. Track the evolution of the free phonk music streaming platform.",
 };
 
 const badgeStyles: Record<string, string> = {

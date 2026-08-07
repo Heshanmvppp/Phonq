@@ -11,9 +11,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 export const metadata: Metadata = {
-  title: "Blog",
-  description: "Stories, releases and guides from the Phonq team.",
-};
+  title: "Phonq Blog — Music Streaming Guides & Updates",
+  description: "Read the latest Phonq blog posts: engineering deep dives, music licensing guides, platform updates, and stories from the free phonk music streaming community.",
+}
 
 export default function BlogPage() {
   return (

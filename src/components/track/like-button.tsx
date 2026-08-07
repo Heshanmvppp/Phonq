@@ -12,10 +12,11 @@ import { cn } from "@/lib/utils";
 interface LikeButtonProps {
   trackId: string;
   initialLiked?: boolean;
+  onLikedChange?: (liked: boolean) => void;
   className?: string;
 }
 
-export function LikeButton({ trackId, initialLiked = false, className }: LikeButtonProps) {
+export function LikeButton({ trackId, initialLiked = false, onLikedChange, className }: LikeButtonProps) {
   const { status } = useSession();
   const router = useRouter();
   const [liked, setLiked] = React.useState(initialLiked);
@@ -35,11 +36,16 @@ export function LikeButton({ trackId, initialLiked = false, className }: LikeBut
     setLiked(next);
     setPending(true);
     try {
-      await fetch("/api/me/favorites", {
+      const res = await fetch("/api/me/favorites", {
         method: next ? "POST" : "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ trackId }),
       });
+      if (!res.ok) {
+        setLiked(!next);
+        return;
+      }
+      onLikedChange?.(next);
       router.refresh();
     } catch {
       setLiked(!next);

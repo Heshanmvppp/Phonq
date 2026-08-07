@@ -8,9 +8,9 @@ import { PageHero } from "@/components/marketing/page-hero";
 import { Card } from "@/components/ui/card";
 
 export const metadata: Metadata = {
-  title: "Legal",
-  description: "Legal information for Phonq — privacy, terms, licenses and more.",
-};
+  title: "Phonq Legal — Privacy Policy, Terms of Service & Licenses",
+  description: "Read Phonq's legal documents: Privacy Policy, Terms of Service, Cookie Policy, Licenses, and DMCA information for the free phonk music platform.",
+}
 
 export default function LegalIndexPage() {
   return (

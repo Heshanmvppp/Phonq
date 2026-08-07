@@ -2,7 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if git rev-parse --git-dir > /dev/null 2>&1; then
+  BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+else
+  BRANCH="main"
+fi
 
 cd "$ROOT"
 

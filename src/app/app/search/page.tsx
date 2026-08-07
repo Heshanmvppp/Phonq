@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { fetchTrendingPhonk } from "@/lib/jamendo";
+
 import { SearchClient } from "./search-client";
 
 export const metadata: Metadata = {
@@ -8,6 +10,7 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function SearchPage() {
-  return <SearchClient />;
+export default async function SearchPage() {
+  const popularTracks = await fetchTrendingPhonk(12).catch(() => []);
+  return <SearchClient popularTracks={popularTracks} />;
 }

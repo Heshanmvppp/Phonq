@@ -2,6 +2,8 @@
 
 import * as React from "react";
 
+import { useSession } from "next-auth/react";
+
 import type { Track } from "@/lib/jamendo";
 
 type RepeatMode = "off" | "all" | "one";
@@ -20,6 +22,8 @@ interface PlayerContextValue {
   repeat: RepeatMode;
   queueOpen: boolean;
   vizEnabled: boolean;
+  favoriteIds: Set<string>;
+  setFavorite: (trackId: string, liked: boolean) => void;
   audioRef: React.RefObject<HTMLAudioElement | null>;
   analyserRef: React.RefObject<AnalyserNode | null>;
   playQueue: (tracks: Track[], startIndex?: number) => void;
@@ -52,6 +56,7 @@ function shuffledIndex(current: number, length: number): number {
 }
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
+  const { status: sessionStatus } = useSession();
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
   const analyserRef = React.useRef<AnalyserNode | null>(null);
   const corsCacheRef = React.useRef(new Map<string, boolean>());
@@ -74,6 +79,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [repeat, setRepeat] = React.useState<RepeatMode>("off");
   const [queueOpen, setQueueOpen] = React.useState(false);
   const [vizEnabled, setVizEnabled] = React.useState(false);
+  const [favoriteIds, setFavoriteIds] = React.useState<Set<string>>(new Set());
 
   const queueRef = React.useRef(queue);
   const queueIndexRef = React.useRef(queueIndex);
@@ -99,6 +105,34 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     currentTrackRef.current = currentTrack;
   }, [currentTrack]);
+
+  /** Refetches the signed-in user's favorite ids so the player-bar heart stays in sync. */
+  React.useEffect(() => {
+    if (!currentTrack || sessionStatus !== "authenticated") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/me/favorites");
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        setFavoriteIds(new Set((data.favorites ?? []).map((f: { trackId: string }) => f.trackId)));
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTrack, sessionStatus]);
+
+  const setFavorite = React.useCallback((trackId: string, liked: boolean) => {
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (liked) next.add(trackId);
+      else next.delete(trackId);
+      return next;
+    });
+  }, []);
 
   /** Probes whether a Jamendo storage origin allows cross-origin audio (per-origin, once). */
   const probeCors = React.useCallback(async (url: string): Promise<boolean> => {
@@ -168,6 +202,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     } else if (repeatRef.current === "all") {
       idx = 0;
     } else {
+      const audio = audioRef.current;
+      if (audio) audio.pause();
       setIsPlaying(false);
       return;
     }
@@ -218,13 +254,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (index < current) {
       setQueueIndex(current - 1);
     } else if (index === current) {
-      setQueueIndex(nextQueue.length === 0 ? -1 : Math.min(current, nextQueue.length - 1));
+      if (nextQueue.length === 0) {
+        const audio = audioRef.current;
+        if (audio) audio.pause();
+        setIsPlaying(false);
+        setQueueIndex(-1);
+      } else {
+        setQueueIndex(Math.min(current, nextQueue.length - 1));
+      }
     }
   }, []);
 
   const clearQueue = React.useCallback(() => {
+    const audio = audioRef.current;
+    if (audio) audio.pause();
     setQueue([]);
     setQueueIndex(-1);
+    setIsPlaying(false);
   }, []);
 
   const seek = React.useCallback((time: number) => {
@@ -297,6 +343,87 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (audio) audio.volume = muted ? 0 : volume;
   }, [volume, muted]);
 
+  /** Global keyboard shortcuts. */
+  React.useEffect(() => {
+    function isEditable(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (document.querySelector('[role="dialog"]')) return;
+
+      if (event.key === " " || event.code === "Space") {
+        if (isEditable(event.target)) return;
+        if (event.target instanceof HTMLElement && event.target.tagName === "BUTTON") return;
+        if (!currentTrackRef.current) return;
+        event.preventDefault();
+        togglePlay();
+        return;
+      }
+
+      if (isEditable(event.target) || !currentTrackRef.current) return;
+
+      switch (event.key) {
+        case "ArrowRight": {
+          const audio = audioRef.current;
+          if (!audio) return;
+          event.preventDefault();
+          seek(Math.min(audio.duration || 0, audio.currentTime + 5));
+          break;
+        }
+        case "ArrowLeft": {
+          const audio = audioRef.current;
+          if (!audio) return;
+          event.preventDefault();
+          seek(Math.max(0, audio.currentTime - 5));
+          break;
+        }
+        case "ArrowUp": {
+          event.preventDefault();
+          const audio = audioRef.current;
+          setVolume((audio ? audio.volume : 0) + 0.05);
+          break;
+        }
+        case "ArrowDown": {
+          event.preventDefault();
+          const audio = audioRef.current;
+          setVolume((audio ? audio.volume : 0) - 0.05);
+          break;
+        }
+        case "m":
+        case "M":
+          toggleMute();
+          break;
+        case "n":
+        case "N":
+          next();
+          break;
+        case "p":
+        case "P":
+          previous();
+          break;
+        case "s":
+        case "S":
+          toggleShuffle();
+          break;
+        case "r":
+        case "R":
+          cycleRepeat();
+          break;
+        case "q":
+        case "Q":
+          setQueueOpen((open) => !open);
+          break;
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [togglePlay, seek, setVolume, toggleMute, next, previous, toggleShuffle, cycleRepeat, setQueueOpen]);
+
   /** Wire media events once. */
   React.useEffect(() => {
     const audio = audioRef.current;
@@ -357,6 +484,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       repeat,
       queueOpen,
       vizEnabled,
+      favoriteIds,
+      setFavorite,
       audioRef,
       analyserRef,
       playQueue,
@@ -388,6 +517,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       repeat,
       queueOpen,
       vizEnabled,
+      favoriteIds,
+      setFavorite,
       playQueue,
       playTrack,
       togglePlay,

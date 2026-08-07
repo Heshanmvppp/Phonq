@@ -39,6 +39,8 @@ export function PlayerBar() {
     repeat,
     queueOpen,
     queue,
+    favoriteIds,
+    setFavorite,
     togglePlay,
     next,
     previous,
@@ -50,9 +52,23 @@ export function PlayerBar() {
     setQueueOpen,
   } = usePlayer();
 
-  if (!currentTrack) return null;
-
   const iconClass = "text-muted-foreground transition-colors hover:text-foreground";
+
+  const volumeRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const el = volumeRef.current;
+    if (!el) return;
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+      const delta = -e.deltaY;
+      if (Math.abs(delta) < 10) return;
+      setVolume(Math.max(0, Math.min(1, volume + delta / 1000)));
+    }
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [volume, setVolume]);
+
+  if (!currentTrack) return null;
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/90 backdrop-blur-lg">
@@ -60,12 +76,32 @@ export function PlayerBar() {
         <Waveform className="h-8 sm:h-9 rounded-lg opacity-70" />
       </div>
 
+      <div className="flex items-center gap-2 px-3 pb-1.5 sm:hidden">
+        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{formatDuration(currentTime)}</span>
+        <Slider
+          value={Math.min(currentTime, duration || 1)}
+          max={duration || 1}
+          step={1}
+          onValueChange={seek}
+          aria-label="Seek"
+          className="flex-1"
+        />
+        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{formatDuration(duration)}</span>
+      </div>
+
       <div className="mx-auto flex h-16 max-w-screen-2xl items-center gap-3 px-3 sm:gap-4 sm:px-6">
         {/* Left: now playing */}
         <div className="flex w-[30%] min-w-0 items-center gap-3">
           <div className="relative aspect-square size-11 shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-border">
             {currentTrack.image ? (
-              <Image src={currentTrack.image} alt="" fill sizes="44px" className="object-cover" unoptimized={false} />
+              <Image
+                src={currentTrack.image}
+                alt=""
+                fill
+                sizes="44px"
+                className="object-cover"
+                unoptimized={false}
+              />
             ) : (
               <span className="flex size-full items-center justify-center">
                 <Music2 className="size-5 text-muted-foreground" />
@@ -76,7 +112,12 @@ export function PlayerBar() {
             <p className="truncate text-sm font-medium leading-tight">{currentTrack.name}</p>
             <p className="truncate text-xs text-muted-foreground">{currentTrack.artistName}</p>
           </div>
-          <LikeButton trackId={currentTrack.id} className="hidden shrink-0 sm:inline-flex" />
+          <LikeButton
+            trackId={currentTrack.id}
+            initialLiked={favoriteIds.has(currentTrack.id)}
+            onLikedChange={(liked) => setFavorite(currentTrack.id, liked)}
+            className="hidden shrink-0 sm:inline-flex"
+          />
         </div>
 
         {/* Center: controls + progress */}
@@ -134,7 +175,12 @@ export function PlayerBar() {
 
         {/* Right: volume + queue */}
         <div className="flex w-[30%] items-center justify-end gap-1.5 sm:gap-3">
-          <div className="hidden items-center gap-2 md:flex">
+          <div
+            ref={volumeRef}
+            className="hidden items-center gap-2 md:flex"
+            aria-label="Volume control (scroll to adjust)"
+            title="Scroll over the speaker icon to change volume"
+          >
             <button type="button" onClick={toggleMute} className={cn(iconClass)} aria-label="Mute">
               {muted || volume === 0 ? (
                 <VolumeX className="size-5" />
@@ -156,6 +202,7 @@ export function PlayerBar() {
             <span className="hidden text-xs tabular-nums lg:inline">{queue.length}</span>
           </button>
         </div>
+
       </div>
 
       <QueuePanel />

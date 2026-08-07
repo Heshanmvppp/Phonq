@@ -18,6 +18,9 @@ export const metadata: Metadata = {
   },
   description: site.description,
   keywords: ["phonk", "music", "streaming", "creative commons", "free music", "open source"],
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+  },
   openGraph: {
     type: "website",
     siteName: site.name,

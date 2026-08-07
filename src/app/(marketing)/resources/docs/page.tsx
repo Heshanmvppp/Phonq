@@ -13,9 +13,9 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 export const metadata: Metadata = {
-  title: "Developer docs",
-  description: "Phonq is open source. Learn how it's built, how the API works, and how to self-host it.",
-};
+  title: "Phonq Documentation — Developer & Self-Hosting Guide",
+  description: "Complete documentation for Phonq: API reference, technical architecture, self-hosting instructions, and development guides for the free music streaming platform.",
+}
 
 const codeBlocks: { title: string; icon: typeof Server; code: string }[] = [
   {

@@ -48,3 +48,63 @@ export function dateString(date: Date | string): string {
     day: "numeric",
   }).format(typeof date === "string" ? new Date(date) : date);
 }
+
+export function timeAgo(date: Date | string): string {
+  const then = typeof date === "string" ? new Date(date) : date;
+  const now = new Date();
+  const seconds = Math.floor((now.getTime() - then.getTime()) / 1000);
+
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+
+  const weeks = Math.floor(days / 7);
+  if (weeks < 4) return `${weeks}w ago`;
+
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+
+  const years = Math.floor(days / 365);
+  return `${years}y ago`;
+}
+
+export function groupByDate<T>(items: T[], dateKey: (item: T) => Date | string): { label: string; items: T[] }[] {
+  const groups = new Map<string, T[]>();
+
+  for (const item of items) {
+    const rawDate = dateKey(item);
+    const date = rawDate instanceof Date ? rawDate : new Date(rawDate);
+    let label: string;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    const itemDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+    if (itemDate.getTime() === today.getTime()) {
+      label = "Today";
+    } else if (itemDate.getTime() === yesterday.getTime()) {
+      label = "Yesterday";
+    } else if (itemDate.getTime() > new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).getTime()) {
+      label = date.toLocaleDateString("en-US", { weekday: "long" });
+    } else {
+      label = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    }
+
+    if (!groups.has(label)) {
+      groups.set(label, []);
+    }
+    groups.get(label)!.push(item);
+  }
+
+  return Array.from(groups.entries()).map(([label, items]) => ({ label, items }));
+}

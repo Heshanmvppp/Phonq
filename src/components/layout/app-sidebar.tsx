@@ -8,6 +8,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Heart, History, Home, Library, ListMusic, Plus, Search, Settings } from "lucide-react";
 
 import { Logo } from "@/components/brand/logo";
+import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,21 @@ export function AppSidebar() {
   const [name, setName] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
+  const [smartDefaults, setSmartDefaults] = React.useState<string[]>(() => {
+    const defaultNames = [
+      "Late night phonk",
+      "Driving mix",
+      "Workout fuel",
+      "Chill vibes only",
+      "Discovery queue",
+      "Favorites",
+      "Lo-fi study",
+      "Focus flow",
+    ];
+    return defaultNames.sort(() => 0.5 - Math.random()).slice(0, 4);
+  });
+  const [showSmartDefaults, setShowSmartDefaults] = React.useState(false);
+
   async function createPlaylist() {
     if (!name.trim()) return;
     setBusy(true);
@@ -45,6 +61,11 @@ export function AppSidebar() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleSelectDefault(selectedName: string) {
+    setName(selectedName);
+    setShowSmartDefaults(false);
   }
 
   return (
@@ -103,7 +124,13 @@ export function AppSidebar() {
 
       <Dialog
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={(open) => {
+          setCreateOpen(open);
+          if (open) {
+            setShowSmartDefaults(true);
+            setName("");
+          }
+        }}
         title="New playlist"
         description="Name your collection of tracks."
       >
@@ -112,16 +139,41 @@ export function AppSidebar() {
             e.preventDefault();
             void createPlaylist();
           }}
-          className="flex flex-col gap-4"
+          className="space-y-4"
         >
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Midnight drive" autoFocus maxLength={60} />
-          <button
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Midnight drive"
+            autoFocus
+            maxLength={60}
+          />
+
+          {showSmartDefaults && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">Quick picks</p>
+              <div className="grid grid-cols-1 gap-1.5">
+                {smartDefaults.slice(0, 4).map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    onClick={() => handleSelectDefault(suggestion)}
+                    className="text-left text-xs rounded-md border border-input/50 px-2.5 py-1.5 transition-all hover:border-primary/40 hover:bg-muted/50"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Button
             type="submit"
             disabled={busy || !name.trim()}
-            className="h-10 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            className="w-full"
           >
-            Create playlist
-          </button>
+            {busy ? "Creating…" : "Create playlist"}
+          </Button>
         </form>
       </Dialog>
     </>

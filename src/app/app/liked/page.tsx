@@ -8,6 +8,7 @@ import { fetchTracksByIds } from "@/lib/jamendo";
 
 import { TrackRow } from "@/components/track/track-row";
 import { SectionHeading } from "@/components/marketing/section-heading";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export const metadata: Metadata = {
   title: "Liked songs",
@@ -26,6 +27,10 @@ export default async function LikedPage() {
   });
 
   const tracks = await fetchTracksByIds(favorites.map((f) => f.trackId));
+  const tracksById = new Map(tracks.map((t) => [t.id, t]));
+  const orderedTracks = favorites
+    .map((f) => tracksById.get(f.trackId))
+    .filter((t): t is NonNullable<typeof t> => t != null);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -33,21 +38,21 @@ export default async function LikedPage() {
         align="left"
         eyebrow="Library"
         title="Liked songs"
-        description={`${tracks.length} track${tracks.length === 1 ? "" : "s"} you've liked.`}
+        description={`${orderedTracks.length} track${orderedTracks.length === 1 ? "" : "s"} you've liked.`}
       />
 
-      {tracks.length === 0 ? (
-        <div className="mt-10 flex flex-col items-center gap-3 rounded-xl border border-dashed p-12 text-center">
-          <Heart className="size-8 text-muted-foreground/50" />
-          <p className="font-display text-lg font-semibold">Nothing here yet</p>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            Tap the heart on any track to save it here.
-          </p>
+      {orderedTracks.length === 0 ? (
+        <div className="mt-10">
+          <EmptyState
+            icon={Heart}
+            title="Nothing here yet"
+            description="Tap the heart on any track to save it here."
+          />
         </div>
       ) : (
         <div className="mt-8 flex flex-col gap-1">
-          {tracks.map((track, index) => (
-            <TrackRow key={track.id} track={track} queue={tracks} index={index} liked showPosition />
+          {orderedTracks.map((track, index) => (
+            <TrackRow key={track.id} track={track} queue={orderedTracks} index={index} liked showPosition />
           ))}
         </div>
       )}

@@ -4,7 +4,10 @@ import * as React from "react";
 
 import { useRouter } from "next/navigation";
 
+import { ListMusic } from "lucide-react";
+
 import { TrackRow } from "@/components/track/track-row";
+import { EmptyState } from "@/components/ui/empty-state";
 import type { Track } from "@/lib/jamendo";
 
 interface PlaylistTracksProps {
@@ -32,9 +35,13 @@ export function PlaylistTracks({ playlistId, tracks }: PlaylistTracksProps) {
 
   if (tracks.length === 0) {
     return (
-      <p className="mt-8 rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">
-        This playlist is empty. Add tracks from search or any track list.
-      </p>
+      <div className="mt-8">
+        <EmptyState
+          icon={ListMusic}
+          title="This playlist is empty"
+          description="Add tracks from search or any track list using the plus button."
+        />
+      </div>
     );
   }
 

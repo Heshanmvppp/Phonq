@@ -5,6 +5,7 @@ import * as React from "react";
 import { ListMusic, Play, Trash2, X } from "lucide-react";
 
 import { usePlayer } from "@/components/player/player-context";
+import { EmptyState } from "@/components/ui/empty-state";
 import { cn, formatDuration } from "@/lib/utils";
 
 export function QueuePanel() {
@@ -54,11 +55,13 @@ export function QueuePanel() {
         </div>
 
         {queue.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-            <ListMusic className="size-10 text-muted-foreground/40" />
-            <p className="text-sm text-muted-foreground">
-              Nothing in the queue yet. Hit play on any track to start listening.
-            </p>
+          <div className="flex flex-1 items-center justify-center p-6">
+            <EmptyState
+              icon={ListMusic}
+              title="Nothing in the queue"
+              description="Hit play on any track to start listening."
+              className="border-none p-6"
+            />
           </div>
         ) : (
           <ul className="flex-1 overflow-y-auto p-2">

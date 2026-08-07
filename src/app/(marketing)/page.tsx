@@ -22,23 +22,28 @@ export const revalidate = 600;
 const valueProps = [
   {
     icon: AudioLines,
+    title: "A player you'll love",
+    description: "Live waveform visualization, a persistent queue, shuffle and repeat — all free and ad-free.",
+    span: "lg:col-span-4",
+    points: ["Live waveform visualizer", "Queue, shuffle and repeat", "Works everywhere"],
+  },
+  {
+    icon: Waves,
     title: "Full-length streaming",
-    description: "Not 30-second previews — complete tracks, streamed legally under Creative Commons licenses.",
+    description: "Not 30-second previews — complete tracks, streamed legally.",
+    span: "lg:col-span-2",
   },
   {
     icon: Radio,
     title: "A live catalog",
-    description: "Trending phonk charts, fresh drops and genre radios, updated straight from Jamendo's 500K+ library.",
-  },
-  {
-    icon: Waves,
-    title: "A player you'll love",
-    description: "Live waveform visualization, a persistent queue, shuffle and repeat — all free and ad-free.",
+    description: "Trending phonk charts, fresh drops and genre radios from Jamendo's 500K+ library.",
+    span: "lg:col-span-3",
   },
   {
     icon: Heart,
     title: "Your library",
-    description: "Favorites, playlists and listening history that sync across devices when you sign in with Google.",
+    description: "Favorites, playlists and history that sync across devices when you sign in.",
+    span: "lg:col-span-3",
   },
 ];
 
@@ -57,7 +62,7 @@ export default async function HomePage() {
       {/* Hero */}
       <section className="relative overflow-hidden">
         <div
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_60%_at_50%_0%,rgba(168,85,247,0.28),transparent)]"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(70%_60%_at_50%_0%,color-mix(in_oklab,var(--color-primary)_16%,transparent),transparent)]"
           aria-hidden
         />
         <div className="relative mx-auto max-w-screen-2xl px-4 py-20 sm:px-6 sm:py-28 lg:py-36">
@@ -67,7 +72,7 @@ export default async function HomePage() {
               Free. Legal. Open source.
             </p>
             <h1 className="font-display text-5xl font-bold leading-[1.05] tracking-tight text-balance sm:text-6xl lg:text-7xl">
-              The free home of <span className="text-gradient">phonk</span>
+              The free home of phonk
             </h1>
             <p className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
               Stream hundreds of thousands of Creative Commons tracks — in full, forever free. No ads,
@@ -152,14 +157,24 @@ export default async function HomePage() {
           title="Built for listeners, not for ads"
           description="Every feature exists because it makes listening better. Nothing exists to make money from you."
         />
-        <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-6">
           {valueProps.map((prop) => (
-            <Card key={prop.title} className="p-6">
+            <Card key={prop.title} className={`p-6 ${prop.span}`}>
               <div className="inline-flex size-11 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <prop.icon className="size-5" />
               </div>
               <h3 className="mt-4 font-display text-lg font-semibold">{prop.title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{prop.description}</p>
+              {prop.points && (
+                <ul className="mt-4 space-y-2 border-t border-border pt-4">
+                  {prop.points.map((point) => (
+                    <li key={point} className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <span className="size-1.5 rounded-full bg-primary/60" />
+                      {point}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </Card>
           ))}
         </div>
@@ -167,7 +182,7 @@ export default async function HomePage() {
 
       {/* CTA */}
       <section className="mx-auto max-w-screen-2xl px-4 pb-20 sm:px-6">
-        <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-violet-950/60 via-fuchsia-950/40 to-background px-6 py-16 text-center sm:py-20">
+        <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-primary/[0.04] px-6 py-16 text-center sm:py-20">
           <Music2 className="pointer-events-none absolute -left-8 -top-8 size-40 rotate-12 text-primary/10" />
           <h2 className="font-display text-3xl font-bold tracking-tight text-balance sm:text-4xl">
             Your next favorite song is waiting
@@ -178,7 +193,7 @@ export default async function HomePage() {
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Button size="lg" asChild>
               <Link href="/login">
-                Get started <ArrowRight className="size-4" />
+                Save your library <ArrowRight className="size-4" />
               </Link>
             </Button>
             <Button size="lg" variant="outline" asChild>
