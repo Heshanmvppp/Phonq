@@ -6,7 +6,7 @@ from a typo fix to a whole feature.
 ## Quick start
 
 ```bash
-git clone https://github.com/Heshanmvppp/Phonq.git
+git clone https://github.com/hexsyro/Phonq.git
 cd Phonq
 npm install
 cp .env.example .env   # fill in DATABASE_URL, JAMENDO_CLIENT_ID, AUTH_SECRET, AUTH_GOOGLE_*

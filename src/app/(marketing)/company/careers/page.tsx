@@ -45,7 +45,7 @@ export default function CareersPage() {
                 </Link>
               ) : (
                 <Link
-                  href="https://github.com/Heshanmvppp/Phonq"
+                  href="https://github.com/hexsyro/Phonq"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex shrink-0 items-center gap-2 rounded-md border border-input px-4 py-2 text-sm font-medium transition-colors hover:bg-muted"
