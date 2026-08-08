@@ -116,6 +116,12 @@ async function get<T>(
   params: Record<string, string | number | string[] | undefined>,
   opts?: { cache?: boolean; ttlMs?: number },
 ): Promise<T> {
+  // Without a client_id there is nothing to query — bail out early instead of
+  // burning network requests (which is also what gets shared keys suspended).
+  if (!process.env.JAMENDO_CLIENT_ID) {
+    throw new Error("JAMENDO_CLIENT_ID is not configured");
+  }
+
   const url = new URL(`${JAMENDO_BASE_URL}/${method}`);
   url.searchParams.set("client_id", process.env.JAMENDO_CLIENT_ID ?? "");
   url.searchParams.set("format", "json");

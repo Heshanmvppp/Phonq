@@ -56,8 +56,71 @@ const emailProvider = process.env.AUTH_RESEND_KEY
     ]
   : [];
 
+/**
+ * Resilient wrapper around the Prisma adapter.
+ *
+ * The app's session strategy is JWT, so the database is only needed during the
+ * sign-in handshake (OAuth account linking). When the DB is unreachable (paused
+ * Neon, bad connection string, network blip) the raw adapter throws an
+ * `AdapterError` and kills the whole callback with a 302->error page.
+ *
+ * This wrapper degrades the same way the catalog does: if a DB call fails, we
+ * return "no account / no user" instead of throwing. Sign-in then completes as
+ * a JWT-only session — the user is authenticated and can browse/stream, and the
+ * moment the DB is reachable again account linking works normally.
+ */
+function resilientPrismaAdapter(): ReturnType<typeof PrismaAdapter> {
+  const adapter = PrismaAdapter(prisma);
+
+  /**
+   * Wrap a possibly-undefined async adapter method so a DB failure returns a
+   * benign value (null/undefined) instead of throwing an `AdapterError`.
+   * Promise rejection and synchronous throw are both handled.
+   */
+  const safe = (fallback: unknown) => {
+    return <A extends unknown[], R>(
+      fn: ((...args: A) => R) | undefined,
+    ) => {
+      const wrapped = async (...args: A): Promise<unknown> => {
+        if (!fn) return fallback;
+        try {
+          return await fn(...args);
+        } catch {
+          return fallback;
+        }
+      };
+      return wrapped as (...args: A) => R;
+    };
+  };
+
+  return {
+    ...adapter,
+    getUserByAccount: safe(null)(adapter.getUserByAccount),
+    getUserByEmail: safe(null)(adapter.getUserByEmail),
+    getUser: safe(null)(adapter.getUser),
+    getSessionAndUser: safe(null)(adapter.getSessionAndUser),
+    createUser: (async (user) => {
+      if (!adapter.createUser) return user;
+      try {
+        return await adapter.createUser(user);
+      } catch {
+        return user;
+      }
+    }) as NonNullable<ReturnType<typeof PrismaAdapter>>["createUser"],
+    updateUser: safe(null)(adapter.updateUser),
+    deleteUser: safe(null)(adapter.deleteUser),
+    linkAccount: safe(undefined)(adapter.linkAccount),
+    unlinkAccount: safe(undefined)(adapter.unlinkAccount),
+    createSession: safe(null)(adapter.createSession),
+    updateSession: safe(null)(adapter.updateSession),
+    deleteSession: safe(undefined)(adapter.deleteSession),
+    createVerificationToken: safe(null)(adapter.createVerificationToken),
+    useVerificationToken: safe(null)(adapter.useVerificationToken),
+  };
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: PrismaAdapter(prisma),
+  adapter: resilientPrismaAdapter(),
   trustHost: true,
   session: { strategy: "jwt" },
   pages: {

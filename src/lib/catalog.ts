@@ -99,7 +99,13 @@ async function writeSuccessStatus(radios?: unknown): Promise<void> {
 async function writeFailureStatus(error: unknown, provider: CatalogProvider = "degraded"): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   globalForCatalog.__phonqDegradedUntil = Date.now() + DEGRADED_WINDOW_MS;
-  console.error(`[catalog] upstream unavailable (${provider}) — falling back to cached static snapshot, will retry`);
+  // Throttle so an expected, persistent outage (e.g. no JAMENDO_CLIENT_ID) only
+  // logs once per window instead of on every single catalog request.
+  const now = Date.now();
+  if (!globalForCatalog.__phonqStatusAt || now - globalForCatalog.__phonqStatusAt >= STATUS_THROTTLE_MS) {
+    globalForCatalog.__phonqStatusAt = now;
+    console.error(`[catalog] upstream unavailable (${provider}) — falling back to cached static snapshot`);
+  }
   await writeStatus({ provider, error: message });
 }
 
