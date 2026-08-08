@@ -99,7 +99,7 @@ async function writeSuccessStatus(radios?: unknown): Promise<void> {
 async function writeFailureStatus(error: unknown, provider: CatalogProvider = "degraded"): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   globalForCatalog.__phonqDegradedUntil = Date.now() + DEGRADED_WINDOW_MS;
-  console.error(`[catalog] upstream unavailable (${provider}) — falling back: ${message}`);
+  console.error(`[catalog] upstream unavailable (${provider}) — falling back to cached static snapshot, will retry`);
   await writeStatus({ provider, error: message });
 }
 
