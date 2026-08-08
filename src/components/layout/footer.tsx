@@ -12,48 +12,48 @@ export function Footer() {
   return (
     <footer className="border-t border-border bg-muted/30">
       <div className="mx-auto max-w-screen-2xl px-4 py-12 sm:py-16 sm:px-6">
-        <div className="grid gap-6 sm:grid-cols-2 sm:gap-4 md:grid-cols-5 md:gap-6">
-          <div className="lg:col-span-2">
-            <Logo />
-            <p className="mt-4 max-w-sm text-sm text-muted-foreground">
-              Phonq is a free, open-source music streaming platform for the phonk community. Every
-              track is Creative Commons licensed and streamed legally via the Jamendo API.
-            </p>
-            <div className="mt-5 flex items-center gap-2">
-              <a
-                href="https://github.com/hexsyro/Phonq"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                aria-label="GitHub"
-              >
-                <GithubIcon className="size-5" />
-              </a>
-              <a
-                href="mailto:hello@phonq.app"
-                className="inline-flex items-center gap-2 rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                aria-label="Email"
-              >
-                <Mail className="size-5" />
-              </a>
-            </div>
-          </div>
+         <div className="flex flex-wrap gap-8 sm:gap-10">
+           <div className="w-64 flex-shrink-0">
+             <Logo />
+             <p className="mt-4 max-w-sm text-sm text-muted-foreground">
+               Phonq is a free, open-source music streaming platform for the phonk community. Every
+               track is Creative Commons licensed and streamed legally via the Jamendo API.
+             </p>
+             <div className="mt-5 flex items-center gap-2">
+               <a
+                 href="https://github.com/hexsyro/Phonq"
+                 target="_blank"
+                 rel="noreferrer"
+                 className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                 aria-label="GitHub"
+               >
+                 <GithubIcon className="size-5" />
+               </a>
+               <a
+                 href="mailto:hello@phonq.app"
+                 className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                 aria-label="Email"
+               >
+                 <Mail className="size-5" />
+               </a>
+             </div>
+           </div>
 
-          {marketingNav.map((group) => (
-            <div key={group.label} className="md:col-span-1">
-              <p className="mb-2.5 text-xs font-semibold uppercase tracking-widest text-muted-foreground">{group.label}</p>
-              <ul className="space-y-1.5">
-                {group.items.map((item) => (
-                  <li key={item.href}>
-                    <Link href={item.href} className="text-sm text-muted-foreground transition-colors hover:text-foreground">
-                      {item.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
+           {marketingNav.map((group) => (
+             <div key={group.label} className="flex min-w-[140px] flex-col">
+               <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">{group.label}</p>
+               <ul className="space-y-2">
+                 {group.items.map((item) => (
+                   <li key={item.href}>
+                     <Link href={item.href} className="text-sm text-muted-foreground transition-colors hover:text-foreground">
+                       {item.label}
+                     </Link>
+                   </li>
+                 ))}
+               </ul>
+             </div>
+           ))}
+         </div>
 
         <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-border pt-6 sm:flex-row">
           <p className="text-xs text-muted-foreground">

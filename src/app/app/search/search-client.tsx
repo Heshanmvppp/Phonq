@@ -13,6 +13,14 @@ import type { Track } from "@/lib/jamendo";
 
 const RECENT_SEARCHES_KEY = "phonq-recent-searches";
 const MAX_RECENT = 5;
+type SearchTab = "tracks" | "artists" | "albums" | "tags";
+
+const SEARCH_TABS: Array<{ value: SearchTab; label: string }> = [
+  { value: "tracks", label: "Tracks" },
+  { value: "artists", label: "Artists" },
+  { value: "albums", label: "Albums" },
+  { value: "tags", label: "Tags" },
+];
 
 function getRecentSearches(): string[] {
   if (typeof window === "undefined") return [];
@@ -42,28 +50,41 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = React.useState(false);
-  const [recentSearches, setRecentSearches] = React.useState<string[]>(() => getRecentSearches());
+  const [recentSearches] = React.useState<string[]>(() => getRecentSearches());
   const [attempt, setAttempt] = React.useState(0);
-  const debounceRef = React.useRef<ReturnType<typeof setTimeout>>(null);
+  const [activeTab, setActiveTab] = React.useState<SearchTab>("tracks");
+  const [retryCount, setRetryCount] = React.useState(0);
+  const [bannerOpen, setBannerOpen] = React.useState(true);
+  const debounceRef = React.useRef<number>(null);
   const requestIdRef = React.useRef(0);
 
   React.useEffect(() => {
     const q = query.trim();
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(
-      () => {
-        if (!q) {
-          requestIdRef.current += 1;
-          setTracks([]);
-          setLoading(false);
-          setError(null);
-          return;
-        }
 
+    const clearAndReset = () => {
+      requestIdRef.current += 1;
+      setTracks([]);
+      setLoading(false);
+      setError(null);
+    };
+
+    if (!q) {
+      const resetId = window.setTimeout(clearAndReset, 0);
+      return () => {
+        window.clearTimeout(resetId);
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+      };
+    }
+
+    const stateId = window.setTimeout(() => {
+      setLoading(true);
+      setError(null);
+      setBannerOpen(true);
+
+      debounceRef.current = window.setTimeout(() => {
         const requestId = ++requestIdRef.current;
-        setLoading(true);
-        setError(null);
 
         fetch(`/api/tracks?search=${encodeURIComponent(q)}&limit=40`)
           .then(async (res) => {
@@ -84,11 +105,11 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
           .finally(() => {
             if (requestIdRef.current === requestId) setLoading(false);
           });
-      },
-      q ? 300 : 0,
-    );
+      }, 300);
+    }, 0);
 
     return () => {
+      window.clearTimeout(stateId);
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [query, attempt]);
@@ -171,6 +192,31 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
         )}
       </div>
 
+      <div className="mt-6 flex flex-wrap items-center gap-2">
+        {SEARCH_TABS.map((tab) => {
+          const isActive = activeTab === tab.value;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setActiveTab(tab.value)}
+              className={cn(
+                "relative rounded-full px-3 py-1.5 text-sm font-medium transition-all duration-200",
+                isActive ? "text-primary" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="relative mt-2 h-0.5 overflow-hidden rounded-full bg-muted">
+        <span
+          className="absolute bottom-0 h-0.5 rounded-full bg-primary transition-all duration-200"
+          style={{ left: `${SEARCH_TABS.findIndex((tab) => tab.value === activeTab) * 25}%`, width: "25%" }}
+        />
+      </div>
+
       <div className="mt-8">
         {!loading && !query.trim() && popularTracks.length > 0 && !visibleSuggestions && (
           <div>
@@ -191,6 +237,18 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
           </div>
         )}
 
+        {!loading && error && query.trim() && bannerOpen ? (
+          <div className="mb-4 flex items-start justify-between rounded-lg border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <div>
+              <p className="font-medium">The signal dropped</p>
+              <p className="text-xs text-destructive/80">We couldn’t reach the catalog just yet — try again and the next drop should land.</p>
+            </div>
+            <button type="button" onClick={() => setBannerOpen(false)} className="rounded-full p-1 transition-colors hover:bg-destructive/20" aria-label="Dismiss banner">
+              <X className="size-4" />
+            </button>
+          </div>
+        ) : null}
+
         {!loading && error && query.trim() && (
           <div className="flex flex-col items-center gap-3 p-8 text-center">
             <EmptyState
@@ -199,7 +257,14 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
               description={error}
               className="w-full"
             >
-              <Button variant="outline" onClick={() => setAttempt((a) => a + 1)}>
+              <Button
+                variant="outline"
+                className={cn(retryCount > 1 && "animate-shake")}
+                onClick={() => {
+                  setRetryCount((count) => count + 1);
+                  setAttempt((a) => a + 1);
+                }}
+              >
                 Try again
               </Button>
             </EmptyState>
@@ -209,13 +274,24 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
         {!loading && !error && query.trim() && tracks.length === 0 && (
           <EmptyState
             icon={SearchX}
-            title={`No results for “${query.trim()}”`}
-            description="Try a different spelling or fewer words."
+            title={activeTab === "tracks" ? `No results for “${query.trim()}”` : `The bassline is quiet for ${activeTab}`}
+            description={
+              activeTab === "tracks"
+                ? "Try a different spelling or fewer words."
+                : "This section is still warming up — switch to tracks to keep the search moving."
+            }
             className="mt-4"
           />
         )}
 
-        {!loading && !error && tracks.length > 0 && (
+        {!loading && !error && activeTab !== "tracks" && query.trim() && tracks.length > 0 && (
+          <div className="mt-4 rounded-xl border border-border bg-card/70 p-6 text-center">
+            <p className="text-sm font-semibold text-foreground">The next layer is still loading</p>
+            <p className="mt-2 text-sm text-muted-foreground">Artists, albums, and tags are on the same signal path as tracks — tap Tracks to browse the live catalog while the rest catches up.</p>
+          </div>
+        )}
+
+        {!loading && !error && activeTab === "tracks" && tracks.length > 0 && (
           <div className="flex flex-col gap-1">
             {tracks.map((track, index) => (
               <TrackRow key={track.id} track={track} queue={tracks} index={index} showPosition />

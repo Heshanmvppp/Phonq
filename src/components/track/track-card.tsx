@@ -45,7 +45,7 @@ export function TrackCard({ track, queue, index = 0, liked = false, className }:
         className,
       )}
     >
-      <div className="relative aspect-square overflow-hidden rounded-lg bg-muted">
+      <div className={cn("relative aspect-square overflow-hidden rounded-lg bg-muted", isNowPlaying && "animate-breathe") }>
         {track.image ? (
           <Image
             src={track.image}

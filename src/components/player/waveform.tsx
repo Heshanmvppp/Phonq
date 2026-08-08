@@ -15,6 +15,7 @@ const BAR_COUNT = 48;
 export function Waveform({ className }: { className?: string }) {
   const { analyserRef, vizEnabled, isPlaying } = usePlayer();
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const [hoveredIndex, setHoveredIndex] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
@@ -64,9 +65,11 @@ export function Waveform({ className }: { className?: string }) {
       for (let i = 0; i < BAR_COUNT; i += 1) {
         const value = values[Math.floor((i / BAR_COUNT) * values.length)] ?? 0;
         const norm = value / 255;
-        const barHeight = Math.max(2, norm * height * (isPlaying ? 1 : 0.3));
+        const hoverBoost = hoveredIndex === null ? 0 : Math.max(0, 1 - Math.abs(i - hoveredIndex) / 3);
+        const intensity = Math.min(1, norm * (isPlaying ? 1 : 0.35) + hoverBoost * 0.35);
+        const barHeight = Math.max(2, intensity * height * (isPlaying ? 1 : 0.3));
         const x = i * barWidth + gap / 2;
-        ctx.globalAlpha = 0.25 + norm * 0.75;
+        ctx.globalAlpha = 0.2 + intensity * 0.8;
         ctx.fillRect(x, height - barHeight, barWidth - gap, barHeight);
       }
       ctx.globalAlpha = 1;
@@ -79,7 +82,19 @@ export function Waveform({ className }: { className?: string }) {
       running = false;
       cancelAnimationFrame(frame);
     };
-  }, [analyserRef, vizEnabled, isPlaying]);
+  }, [analyserRef, vizEnabled, isPlaying, hoveredIndex]);
 
-  return <canvas ref={canvasRef} className={cn("pointer-events-none block h-10 w-full", className)} aria-hidden="true" />;
+  return (
+    <canvas
+      ref={canvasRef}
+      className={cn("block h-10 w-full cursor-crosshair", className)}
+      aria-hidden="true"
+      onMouseMove={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+        setHoveredIndex(Math.round(ratio * (BAR_COUNT - 1)));
+      }}
+      onMouseLeave={() => setHoveredIndex(null)}
+    />
+  );
 }

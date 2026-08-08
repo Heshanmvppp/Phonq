@@ -8,6 +8,7 @@ import { Search } from "lucide-react";
 
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { UserMenu } from "@/components/layout/user-menu";
+import { cn } from "@/lib/utils";
 
 interface AppHeaderProps {
   name?: string | null;
@@ -18,6 +19,14 @@ interface AppHeaderProps {
 export function AppHeader({ name, email, image }: AppHeaderProps) {
   const router = useRouter();
   const [query, setQuery] = React.useState("");
+  const [scrolled, setScrolled] = React.useState(false);
+
+  React.useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 80);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -26,7 +35,7 @@ export function AppHeader({ name, email, image }: AppHeaderProps) {
   }
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-lg sm:px-6">
+    <header className={cn("sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border px-4 backdrop-blur-lg transition-all duration-300 sm:px-6", scrolled ? "border-border/70 bg-background/80" : "border-transparent bg-background/50") }>
       <form onSubmit={handleSubmit} className="relative w-full max-w-md">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <input

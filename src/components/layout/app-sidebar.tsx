@@ -85,12 +85,13 @@ export function AppSidebar() {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex items-center justify-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors md:justify-start",
+                  "relative flex items-center justify-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 md:justify-start",
                   active
-                    ? "bg-primary/10 text-primary"
+                    ? "bg-primary/10 text-primary shadow-[inset_2px_0_0_var(--color-primary)]"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
               >
+                {active ? <span className="absolute inset-y-1 left-1 w-1 rounded-full bg-primary/80" /> : null}
                 <item.icon className="size-5 shrink-0" />
                 <span className="hidden md:inline">{item.label}</span>
               </Link>

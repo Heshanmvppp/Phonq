@@ -54,7 +54,7 @@ export function TrackRow({
   return (
     <div
       className={cn(
-        "group flex w-full items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-muted",
+        "group flex w-full items-center gap-3 rounded-lg px-3 py-2 transition-all duration-200 hover:bg-muted hover:shadow-sm",
         isCurrent && "bg-muted/70",
         className,
       )}
@@ -103,7 +103,7 @@ export function TrackRow({
         {formatDuration(track.duration)}
       </span>
 
-      <div className="flex shrink-0 items-center gap-0.5">
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 translate-y-1 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100">
         {track.audioDownloadAllowed && track.downloadUrl && (
           <a
             href={track.downloadUrl}

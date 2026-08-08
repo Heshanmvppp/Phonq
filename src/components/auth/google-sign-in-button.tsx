@@ -20,8 +20,10 @@ export function GoogleSignInButton() {
 
   return (
     <Button className="w-full" size="lg" onClick={handleSignIn} disabled={busy}>
-      <GoogleIcon size={18} />
-      {busy ? "Redirecting…" : "Continue with Google"}
+      <span className="flex min-w-0 items-center justify-center gap-2">
+        {busy ? <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <GoogleIcon size={18} />}
+        <span>{busy ? "Redirecting…" : "Continue with Google"}</span>
+      </span>
     </Button>
   );
 }

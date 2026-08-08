@@ -12,7 +12,6 @@ export function QueuePanel() {
   const {
     queue,
     queueIndex,
-    currentTrack,
     queueOpen,
     setQueueOpen,
     jumpTo,
@@ -21,6 +20,7 @@ export function QueuePanel() {
     togglePlay,
     isPlaying,
   } = usePlayer();
+  const [removingIndexes, setRemovingIndexes] = React.useState<number[]>([]);
 
   if (!queueOpen) return null;
 
@@ -68,12 +68,15 @@ export function QueuePanel() {
             {queue.map((track, index) => {
               const isCurrent = index === queueIndex;
               const isNowPlaying = isCurrent && isPlaying;
+              const isRemoving = removingIndexes.includes(index);
               return (
                 <li key={`${track.id}-${index}`}>
                   <div
                     className={cn(
-                      "group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted",
-                      isCurrent && "bg-muted/70",
+                      "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-all duration-200 hover:bg-muted",
+                      isCurrent && "bg-muted/70 animate-sweep",
+                      isRemoving && "animate-slide-out-left",
+                      !isRemoving && !isCurrent && "hover:translate-x-0.5",
                     )}
                   >
                     <button
@@ -110,7 +113,13 @@ export function QueuePanel() {
                     <span className="text-xs tabular-nums text-muted-foreground">{formatDuration(track.duration)}</span>
                     <button
                       type="button"
-                      onClick={() => removeFromQueue(index)}
+                      onClick={() => {
+                        setRemovingIndexes((prev) => (prev.includes(index) ? prev : [...prev, index]));
+                        window.setTimeout(() => {
+                          removeFromQueue(index);
+                          setRemovingIndexes((prev) => prev.filter((value) => value !== index));
+                        }, 220);
+                      }}
                       className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground group-hover:opacity-100"
                       aria-label="Remove from queue"
                     >

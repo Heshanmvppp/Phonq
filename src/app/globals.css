@@ -133,10 +133,31 @@
     background-image: radial-gradient(circle at 20% 20%, color-mix(in oklch, var(--color-primary) 8%, transparent), transparent 45%);
   }
   .animate-fade-up {
-    animation: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   .animate-eq {
     animation: equalize 1s ease-in-out infinite;
+  }
+  .animate-slide-up {
+    animation: slide-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-breathe {
+    animation: breathe 3.2s cubic-bezier(0.22, 1, 0.36, 1) infinite alternate;
+  }
+  .animate-burst {
+    animation: burst 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-shake {
+    animation: shake 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-sweep {
+    animation: sweep 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-slide-out-left {
+    animation: slide-out-left 0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  .animate-fade-in-fast {
+    animation: fade-in-fast 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 }
 
@@ -167,6 +188,95 @@
   }
   to {
     transform: translateX(-50%);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes breathe {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.02);
+  }
+}
+
+@keyframes burst {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  50% {
+    transform: translateX(3px);
+  }
+  75% {
+    transform: translateX(-2px);
+  }
+}
+
+@keyframes sweep {
+  from {
+    box-shadow: inset 4px 0 0 0 color-mix(in oklch, var(--color-primary) 0%, transparent);
+    background: linear-gradient(90deg, color-mix(in oklch, var(--color-primary) 8%, transparent) 0%, transparent 100%);
+  }
+  to {
+    box-shadow: inset 4px 0 0 0 color-mix(in oklch, var(--color-primary) 35%, transparent);
+    background: linear-gradient(90deg, color-mix(in oklch, var(--color-primary) 16%, transparent) 0%, transparent 100%);
+  }
+}
+
+@keyframes slide-out-left {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    max-height: 120px;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-20px) scale(0.96);
+    max-height: 0;
+    margin-bottom: 0;
+    padding-bottom: 0;
+    padding-top: 0;
+  }
+}
+
+@keyframes fade-in-fast {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

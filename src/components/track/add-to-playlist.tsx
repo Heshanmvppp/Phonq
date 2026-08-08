@@ -101,6 +101,7 @@ export function AddToPlaylistButton({ trackId, className }: AddToPlaylistButtonP
   const [name, setName] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [addedId, setAddedId] = React.useState<string | null>(null);
+  const [feedbackActive, setFeedbackActive] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [formStep, setFormStep] = React.useState(1);
 
@@ -136,7 +137,11 @@ export function AddToPlaylistButton({ trackId, className }: AddToPlaylistButtonP
         return;
       }
       setAddedId(playlistId);
-      window.setTimeout(() => setAddedId(null), 1500);
+      setFeedbackActive(true);
+      window.setTimeout(() => {
+        setAddedId(null);
+        setFeedbackActive(false);
+      }, 600);
       router.refresh();
     } finally {
       setBusy(false);
@@ -182,7 +187,9 @@ export function AddToPlaylistButton({ trackId, className }: AddToPlaylistButtonP
       <DropdownMenu
         trigger={
           <span className={cn("inline-flex items-center gap-1.5 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground", className)}>
-            <ListPlus className="size-4" />
+            <span className={cn("transition-transform duration-200", feedbackActive && "scale-110") }>
+              {feedbackActive ? <Check className="size-4 text-success" /> : <ListPlus className="size-4" />}
+            </span>
           </span>
         }
         onOpenChange={(open) => {

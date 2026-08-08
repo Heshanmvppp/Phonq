@@ -21,6 +21,7 @@ export function LikeButton({ trackId, initialLiked = false, onLikedChange, class
   const router = useRouter();
   const [liked, setLiked] = React.useState(initialLiked);
   const [pending, setPending] = React.useState(false);
+  const [burst, setBurst] = React.useState(false);
 
   async function handleClick(event: React.MouseEvent) {
     event.preventDefault();
@@ -34,6 +35,7 @@ export function LikeButton({ trackId, initialLiked = false, onLikedChange, class
 
     const next = !liked;
     setLiked(next);
+    setBurst(true);
     setPending(true);
     try {
       const res = await fetch("/api/me/favorites", {
@@ -51,6 +53,7 @@ export function LikeButton({ trackId, initialLiked = false, onLikedChange, class
       setLiked(!next);
     } finally {
       setPending(false);
+      window.setTimeout(() => setBurst(false), 420);
     }
   }
 
@@ -59,14 +62,27 @@ export function LikeButton({ trackId, initialLiked = false, onLikedChange, class
       type="button"
       onClick={handleClick}
       className={cn(
-        "inline-flex items-center justify-center rounded-full p-1.5 transition-colors",
+        "group relative inline-flex items-center justify-center rounded-full p-1.5 transition-colors",
         liked ? "text-primary" : "text-muted-foreground hover:text-foreground",
         className,
       )}
       aria-label={liked ? "Remove from favorites" : "Add to favorites"}
       aria-pressed={liked}
     >
-      <Heart className={cn("size-4 transition-transform", liked && "fill-primary scale-110")} />
+      <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        {burst ? (
+          <span className="absolute inset-0 rounded-full bg-primary/20 animate-burst" />
+        ) : null}
+      </span>
+      <Heart className={cn("relative size-4 transition-all duration-200", liked && "fill-primary scale-110", burst && "scale-110")} />
+      {burst ? (
+        <>
+          <span className="pointer-events-none absolute -left-1 top-0 size-1.5 rounded-full bg-primary/70 animate-burst" />
+          <span className="pointer-events-none absolute -right-1 top-0 size-1.5 rounded-full bg-primary/70 animate-burst" style={{ animationDelay: "90ms" }} />
+          <span className="pointer-events-none absolute -left-1 bottom-0 size-1.5 rounded-full bg-primary/70 animate-burst" style={{ animationDelay: "180ms" }} />
+          <span className="pointer-events-none absolute -right-1 bottom-0 size-1.5 rounded-full bg-primary/70 animate-burst" style={{ animationDelay: "260ms" }} />
+        </>
+      ) : null}
     </button>
   );
 }
