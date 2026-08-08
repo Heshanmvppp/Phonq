@@ -6,6 +6,15 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 
 import { prisma } from "@/lib/prisma";
 
+if (!process.env.AUTH_SECRET) {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "AUTH_SECRET is not set. Generate one with: openssl rand -base64 32"
+    );
+  }
+  process.env.AUTH_SECRET = "dev-only-fallback-secret-change-me";
+}
+
 /**
  * Email magic-link provider using the Resend HTTP API directly (no nodemailer).
  * Enabled only when `AUTH_RESEND_KEY` is set, so a clone without it still boots
