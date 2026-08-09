@@ -117,7 +117,6 @@ export function PlayerBar() {
       window.clearTimeout(transitionId);
       window.clearTimeout(id);
     };
-    return () => window.clearTimeout(id);
   }, [activeTrack, currentTrack]);
 
   const displayValue = isScrubbing ? scrubValue : currentTime;
