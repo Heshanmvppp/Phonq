@@ -1,36 +1,24 @@
 "use client";
 
-import * as React from "react";
-
 import { useTheme } from "next-themes";
 
-import { Laptop, Moon, Sun } from "lucide-react";
-
-import { DropdownMenu, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { Moon, Sun } from "lucide-react";
 
 export function ThemeToggle() {
-  const { setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
+
+  function handleToggle() {
+    setTheme(resolvedTheme === "dark" ? "light" : "dark");
+  }
 
   return (
-    <DropdownMenu
-      trigger={
-        <span className="flex cursor-pointer items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
-          <Sun className="size-4 dark:hidden" />
-          <Moon className="hidden size-4 dark:block" />
-        </span>
-      }
+    <button
+      type="button"
+      onClick={handleToggle}
+      className="flex cursor-pointer items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
     >
-      <DropdownMenuLabel>Theme</DropdownMenuLabel>
-      <DropdownMenuItem icon={<Sun />} onClick={() => setTheme("dark")}>
-        Dark
-      </DropdownMenuItem>
-      <DropdownMenuItem icon={<Moon />} onClick={() => setTheme("light")}>
-        Light
-      </DropdownMenuItem>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem icon={<Laptop />} onClick={() => setTheme("system")}>
-        System
-      </DropdownMenuItem>
-    </DropdownMenu>
+      {resolvedTheme === "dark" ? <Moon className="size-4" /> : <Sun className="size-4" />}
+    </button>
   );
 }

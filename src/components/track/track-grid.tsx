@@ -15,7 +15,7 @@ interface TrackGridProps {
 export function TrackGrid({ tracks, likedIds, loading = false, className }: TrackGridProps) {
   if (loading) {
     return (
-      <div className={cn("grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5", className)}>
+      <div className={cn("grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5", className)}>
         {Array.from({ length: 10 }).map((_, i) => (
           <div key={i} className="rounded-xl border border-border bg-card p-3">
             <Skeleton className="aspect-square w-full rounded-lg" />
@@ -30,7 +30,7 @@ export function TrackGrid({ tracks, likedIds, loading = false, className }: Trac
   if (tracks.length === 0) return null;
 
   return (
-    <div className={cn("grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5", className)}>
+    <div className={cn("grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5", className)}>
       {tracks.map((track, index) => (
         <TrackCard key={track.id} track={track} queue={tracks} index={index} liked={likedIds?.has(track.id)} />
       ))}

@@ -55,6 +55,7 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
   const [activeTab, setActiveTab] = React.useState<SearchTab>("tracks");
   const [retryCount, setRetryCount] = React.useState(0);
   const [bannerOpen, setBannerOpen] = React.useState(true);
+  const [selectedTag, setSelectedTag] = React.useState<string | null>(null);
   const debounceRef = React.useRef<number>(null);
   const requestIdRef = React.useRef(0);
 
@@ -68,6 +69,7 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
       setTracks([]);
       setLoading(false);
       setError(null);
+      setSelectedTag(null);
     };
 
     if (!q) {
@@ -121,6 +123,42 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
 
   const visibleSuggestions = !query.trim() && showSuggestions;
 
+  const grouped = React.useMemo(() => {
+    const artists = new Map<string, Track[]>();
+    const albums = new Map<string, Track[]>();
+    const tagCounts = new Map<string, number>();
+    for (const track of tracks) {
+      const artist = track.artistName || "Unknown Artist";
+      const artistList = artists.get(artist) ?? [];
+      artistList.push(track);
+      artists.set(artist, artistList);
+
+      const albumKey = `${track.albumId ?? track.albumName}`;
+      const albumList = albums.get(albumKey) ?? [];
+      albumList.push(track);
+      albums.set(albumKey, albumList);
+
+      for (const tag of track.tags) {
+        const lower = tag.toLowerCase();
+        tagCounts.set(lower, (tagCounts.get(lower) ?? 0) + 1);
+      }
+    }
+    const sortedArtists = [...artists.entries()].sort((a, b) => b[1].length - a[1].length);
+    const sortedAlbums = [...albums.entries()].sort((a, b) => b[1].length - a[1].length);
+    const sortedTags = [...tagCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 24)
+      .map(([tag]) => tag);
+    return { sortedArtists, sortedAlbums, sortedTags };
+  }, [tracks]);
+
+  const filteredTracks = React.useMemo(() => {
+    if (!selectedTag) return tracks;
+    return tracks.filter((track) => track.tags.some((tag) => tag.toLowerCase() === selectedTag));
+  }, [tracks, selectedTag]);
+
+  const hasResults = tracks.length > 0;
+
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <h1 className="font-display text-2xl font-bold">Search</h1>
@@ -154,7 +192,7 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
         )}
 
         {visibleSuggestions && (
-          <div className="absolute top-full mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-border bg-popover shadow-lg">
+          <div className="absolute top-full mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-border bg-card text-card-foreground shadow-lg">
             <div className="p-2">
               {recentSearches.length > 0 && (
                 <>
@@ -192,7 +230,7 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
         )}
       </div>
 
-      <div className="mt-6 flex flex-wrap items-center gap-2">
+      <div className="mt-6 flex items-center gap-1 rounded-xl border border-border bg-card p-1">
         {SEARCH_TABS.map((tab) => {
           const isActive = activeTab === tab.value;
           return (
@@ -201,8 +239,8 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
               type="button"
               onClick={() => setActiveTab(tab.value)}
               className={cn(
-                "relative rounded-full px-3 py-1.5 text-sm font-medium transition-all duration-200",
-                isActive ? "text-primary" : "text-muted-foreground hover:text-foreground",
+                "flex-1 rounded-lg px-3 py-2 text-center text-sm font-medium transition-all duration-200",
+                isActive ? "bg-primary/10 text-primary shadow-sm" : "text-muted-foreground hover:text-foreground",
               )}
             >
               {tab.label}
@@ -210,11 +248,21 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
           );
         })}
       </div>
-      <div className="relative mt-2 h-0.5 overflow-hidden rounded-full bg-muted">
-        <span
-          className="absolute bottom-0 h-0.5 rounded-full bg-primary transition-all duration-200"
-          style={{ left: `${SEARCH_TABS.findIndex((tab) => tab.value === activeTab) * 25}%`, width: "25%" }}
-        />
+      <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
+        <span>
+          {hasResults
+            ? `${tracks.length} result${tracks.length === 1 ? "" : "s"}${selectedTag ? ` filtered by “${selectedTag}”` : ""}`
+            : "Browse the full phonk catalog"}
+        </span>
+        {selectedTag && (
+          <button
+            type="button"
+            onClick={() => setSelectedTag(null)}
+            className="rounded-md px-2 py-0.5 font-medium text-primary transition-colors hover:bg-primary/10"
+          >
+            Clear filter
+          </button>
+        )}
       </div>
 
       <div className="mt-8">
@@ -274,28 +322,99 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
         {!loading && !error && query.trim() && tracks.length === 0 && (
           <EmptyState
             icon={SearchX}
-            title={activeTab === "tracks" ? `No results for “${query.trim()}”` : `The bassline is quiet for ${activeTab}`}
+            title={
+              activeTab === "tracks"
+                ? `No results for “${query.trim()}”`
+                : `Nothing matches “${query.trim()}” yet`
+            }
             description={
               activeTab === "tracks"
                 ? "Try a different spelling or fewer words."
-                : "This section is still warming up — switch to tracks to keep the search moving."
+                : "Artists, albums and tags are built from the same results — try a different search."
             }
             className="mt-4"
           />
         )}
 
-        {!loading && !error && activeTab !== "tracks" && query.trim() && tracks.length > 0 && (
-          <div className="mt-4 rounded-xl border border-border bg-card/70 p-6 text-center">
-            <p className="text-sm font-semibold text-foreground">The next layer is still loading</p>
-            <p className="mt-2 text-sm text-muted-foreground">Artists, albums, and tags are on the same signal path as tracks — tap Tracks to browse the live catalog while the rest catches up.</p>
+        {!loading && !error && hasResults && activeTab === "tracks" && (
+          <div className="flex flex-col gap-1">
+            {filteredTracks.map((track, index) => (
+              <TrackRow key={track.id} track={track} queue={filteredTracks} index={index} showPosition />
+            ))}
           </div>
         )}
 
-        {!loading && !error && activeTab === "tracks" && tracks.length > 0 && (
-          <div className="flex flex-col gap-1">
-            {tracks.map((track, index) => (
-              <TrackRow key={track.id} track={track} queue={tracks} index={index} showPosition />
+        {!loading && !error && hasResults && activeTab === "artists" && (
+          <div className="space-y-6">
+            {grouped.sortedArtists.map(([artist, artistTracks]) => (
+              <section key={artist}>
+                <h2 className="mb-2 flex items-baseline justify-between text-sm font-semibold">
+                  <span>{artist}</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {artistTracks.length} track{artistTracks.length === 1 ? "" : "s"}
+                  </span>
+                </h2>
+                <div className="flex flex-col gap-1">
+                  {artistTracks.map((track, index) => (
+                    <TrackRow key={track.id} track={track} queue={artistTracks} index={index} />
+                  ))}
+                </div>
+              </section>
             ))}
+          </div>
+        )}
+
+        {!loading && !error && hasResults && activeTab === "albums" && (
+          <div className="space-y-6">
+            {grouped.sortedAlbums.map(([album, albumTracks]) => (
+              <section key={album}>
+                <h2 className="mb-2 flex items-baseline justify-between text-sm font-semibold">
+                  <span>{albumTracks[0]?.albumName ?? "Unknown album"}</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {albumTracks.length} track{albumTracks.length === 1 ? "" : "s"}
+                  </span>
+                </h2>
+                <div className="flex flex-col gap-1">
+                  {albumTracks.map((track, index) => (
+                    <TrackRow key={track.id} track={track} queue={albumTracks} index={index} />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+
+        {!loading && !error && hasResults && activeTab === "tags" && (
+          <div className="space-y-6">
+            <div className="flex flex-wrap gap-2">
+              {grouped.sortedTags.map((tag) => {
+                const isSelected = selectedTag === tag;
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => setSelectedTag(isSelected ? null : tag)}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-sm transition-colors",
+                      isSelected
+                        ? "border-primary/50 bg-primary/10 font-medium text-primary"
+                        : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                    )}
+                  >
+                    {tag}
+                  </button>
+                );
+              })}
+            </div>
+            {filteredTracks.length > 0 ? (
+              <div className="flex flex-col gap-1">
+                {filteredTracks.map((track, index) => (
+                  <TrackRow key={track.id} track={track} queue={filteredTracks} index={index} showPosition />
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Pick a tag to filter the results.</p>
+            )}
           </div>
         )}
 

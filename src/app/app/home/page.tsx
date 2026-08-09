@@ -1,14 +1,20 @@
 import type { Metadata } from "next";
 
-import Link from "next/link";
-
-import { fetchFreshDrops, fetchRadios, fetchTrendingPhonk, fetchTracksByIds } from "@/lib/catalog";
-import { PHONK_SUBGENRES } from "@/lib/phonk-genres";
+import {
+  fetchFreshDrops,
+  fetchRadios,
+  fetchSubgenreTracks,
+  fetchTrendingPhonk,
+  fetchTracks,
+  fetchTracksByIds,
+} from "@/lib/catalog";
+import { getSubgenre, PHONK_SUBGENRES } from "@/lib/phonk-genres";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import type { Track } from "@/lib/jamendo";
+import { buildAffinity, rankForYou } from "@/lib/recommendations";
 
-import { TrackGrid } from "@/components/track/track-grid";
+import { TrackStrip } from "@/components/track/track-strip";
 import { SectionHeading } from "@/components/marketing/section-heading";
 import { Card } from "@/components/ui/card";
 
@@ -18,43 +24,52 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
+const SUBGENRE_STRIP_LIMIT = 12;
+
 export default async function AppHomePage() {
   const session = await auth();
-  const [trending, fresh, radios] = await Promise.all([
-    fetchTrendingPhonk(20).catch(() => []),
-    fetchFreshDrops(20).catch(() => []),
-    fetchRadios().catch(() => []),
-  ]);
 
   let favoriteCount = 0;
   let listenCount = 0;
   let likedIds: Set<string> | undefined;
   let isNewUser = true;
   let favoriteTracks: Track[] = [];
-  const topTags: string[] = [];
-  const topArtists: string[] = [];
+  let listenedTracks: Track[] = [];
+
+  const [trending, fresh, radios, subgenreRows, listenRows, favoriteRows] = await Promise.all([
+    fetchTrendingPhonk(20).catch(() => []),
+    fetchFreshDrops(20).catch(() => []),
+    fetchRadios().catch(() => []),
+    Promise.all(
+      PHONK_SUBGENRES.map(async (subgenre) => ({
+        subgenre,
+        tracks: (await fetchSubgenreTracks(subgenre.slug, SUBGENRE_STRIP_LIMIT).catch(() => [])) as Track[],
+      })),
+    ),
+    session?.user?.id
+      ? prisma.listen.findMany({
+          where: { userId: session.user.id },
+          orderBy: { listenedAt: "desc" },
+          take: 100,
+          select: { trackId: true },
+        })
+      : Promise.resolve([]),
+    session?.user?.id
+      ? prisma.favorite.findMany({
+          where: { userId: session.user.id },
+          orderBy: { createdAt: "desc" },
+          select: { trackId: true },
+        })
+      : Promise.resolve([]),
+  ]);
 
   if (session?.user?.id) {
-    const [listenRows, favoriteRows] = await Promise.all([
-      prisma.listen.findMany({
-        where: { userId: session.user.id },
-        orderBy: { listenedAt: "desc" },
-        take: 100,
-        select: { trackId: true },
-      }),
-      prisma.favorite.findMany({
-        where: { userId: session.user.id },
-        orderBy: { createdAt: "desc" },
-        select: { trackId: true },
-      }),
-    ]);
-
     listenCount = listenRows.length;
     favoriteCount = favoriteRows.length;
     likedIds = new Set(favoriteRows.map((f) => f.trackId));
     isNewUser = listenCount < 5;
 
-    const [fetchedFavorites, listenedTracks] = await Promise.all([
+    const [fetchedFavorites, fetchedListened] = await Promise.all([
       favoriteRows.length > 0
         ? fetchTracksByIds(favoriteRows.slice(0, 20).map((f) => f.trackId)).catch(() => [])
         : Promise.resolve<Track[]>([]),
@@ -63,112 +78,126 @@ export default async function AppHomePage() {
         : Promise.resolve<Track[]>([]),
     ]);
     favoriteTracks = fetchedFavorites;
-
-    const tagCounts = new Map<string, number>();
-    const artistCounts = new Map<string, number>();
-    for (const track of listenedTracks) {
-      for (const raw of track.tags) {
-        const tag = raw.toLowerCase().trim();
-        if (!tag || tag === "phonk") continue;
-        tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
-      }
-      const genre = track.genre?.toLowerCase().trim();
-      if (genre && genre !== "phonk") {
-        tagCounts.set(genre, (tagCounts.get(genre) ?? 0) + 1);
-      }
-      if (track.artistName) {
-        artistCounts.set(track.artistName, (artistCounts.get(track.artistName) ?? 0) + 1);
-      }
-    }
-    topTags.push(...[...tagCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([tag]) => tag));
-    topArtists.push(...[...artistCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([name]) => name));
+    listenedTracks = fetchedListened;
   }
 
-  const greeting = isNewUser ? "Welcome to Phonq" : "Welcome back";
-  const greetingDesc = isNewUser
-    ? "Your music journey starts here. Explore the phonk catalog and discover your sound."
-    : "Your listening history powers the picks below.";
+  const profile = buildAffinity(listenedTracks, favoriteTracks);
+  const topTag = profile.topTag;
+  const topSubgenreName = profile.topSubgenre ? (getSubgenre(profile.topSubgenre)?.name ?? null) : null;
+
+  // Recently played, in listen order with duplicates collapsed.
+  const trackById = new Map(listenedTracks.map((track) => [track.id, track]));
+  const recentlyPlayed: Track[] = [];
+  const seenRecent = new Set<string>();
+  for (const row of listenRows) {
+    const track = trackById.get(row.trackId);
+    if (!track || seenRecent.has(track.id)) continue;
+    seenRecent.add(track.id);
+    recentlyPlayed.push(track);
+    if (recentlyPlayed.length === 12) break;
+  }
+
+  const topTagTracks = !isNewUser && topTag
+    ? await fetchTracks({ tags: [topTag], limit: SUBGENRE_STRIP_LIMIT, boost: "popularity_week" }).catch(() => [])
+    : [];
+
+  const forYouCandidates = [...trending, ...fresh, ...subgenreRows.flatMap((row) => row.tracks)];
+  const forYou = rankForYou(profile, forYouCandidates, 12);
 
   return (
-    <div className="space-y-12 px-4 py-8 sm:px-6 lg:px-8">
-      {!isNewUser && (topTags.length > 0 || topArtists.length > 0) && (
-        <div className="mb-6 rounded-lg bg-primary/5 p-4 text-center">
-          <p className="text-sm font-medium text-primary">
-            {topTags.length > 0
-              ? `Based on your listening history, "${topTags[0]}"${topTags[1] ? ` and "${topTags[1]}"` : ""} are your most-played vibes — the fresh drops below should fit right in.`
-              : `Your most-played artists: ${topArtists.slice(0, 2).join(" and ")}. Fresh drops are waiting below.`}
-          </p>
+    <div className="space-y-14 px-4 py-8 sm:px-6 lg:px-8">
+      <header className="animate-fade-up space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-primary/80">
+          {isNewUser ? "New here?" : "Welcome back"}
+        </p>
+        <h1 className="font-display text-3xl font-bold tracking-tight text-balance sm:text-4xl">
+          {isNewUser ? "Start your phonk journey" : "Good to see you"}
+        </h1>
+        <p className="max-w-2xl text-base leading-relaxed text-muted-foreground">
+          {isNewUser
+            ? "Every track here is classified into a phonk subgenre — and nothing else. Hover a card and press play to start a queue; we learn your taste from there."
+            : "Your listening history powers the picks below — from your top vibes to what&apos;s hot right now."}
+        </p>
+      </header>
+
+      <TrackStrip
+        eyebrow="For you"
+        title={isNewUser ? "Kick off your journey" : "Picked for you"}
+        description={
+          isNewUser
+            ? "Today's phonk ranked by momentum. Play a few tracks and this row starts learning you."
+            : topSubgenreName && profile.topArtist
+              ? `Scored from your history — ${profile.topArtist} and ${topSubgenreName} lead the mix, cut with what's hot right now.`
+              : topSubgenreName
+                ? `Scored from your ${listenCount} listens — ${topSubgenreName} leads, plus fresh finds.`
+                : "Scored from your listening history, mixed with what's hot right now."
+        }
+        tracks={forYou}
+        likedIds={likedIds}
+      />
+
+      {!isNewUser && (
+        <div className="space-y-14">
+          {recentlyPlayed.length > 0 && (
+            <TrackStrip
+              eyebrow="Welcome back"
+              title="Recently played"
+              description="Pick up right where you left off."
+              tracks={recentlyPlayed}
+              likedIds={likedIds}
+            />
+          )}
+
+          {favoriteTracks.length > 0 && (
+            <TrackStrip
+              eyebrow="Welcome back"
+              title="From your library"
+              description={`You've loved ${favoriteCount} track${favoriteCount === 1 ? "" : "s"} — start here.`}
+              tracks={favoriteTracks.slice(0, SUBGENRE_STRIP_LIMIT)}
+              likedIds={likedIds}
+            />
+          )}
+
+          {topTag && topTagTracks.length > 0 && (
+            <TrackStrip
+              eyebrow="Welcome back"
+              title={`More “${topTag}”`}
+              description="Your most-played vibe, served fresh."
+              tracks={topTagTracks}
+              likedIds={likedIds}
+            />
+          )}
         </div>
       )}
 
-      <section>
-        <div className="flex items-end justify-between gap-4">
-          <SectionHeading
-            align="left"
-            eyebrow={isNewUser ? "Start here" : "Right now"}
-            title={isNewUser ? "Trending in phonk" : greeting}
-            description={greetingDesc}
-          />
-        </div>
-        <div className="mt-6">
-          {isNewUser && session?.user ? (
-            <p className="mb-4 max-w-lg text-sm text-muted-foreground">
-              Tip: Hover a track and click play to start a queue. Use the &quot;+&quot; button to add it to a playlist.
-            </p>
-          ) : null}
-          <TrackGrid tracks={trending} likedIds={likedIds} />
-        </div>
-      </section>
+      <TrackStrip
+        eyebrow={isNewUser ? "Discover" : "Just landed"}
+        title="Fresh drops"
+        description="The newest tracks added to the catalog."
+        tracks={fresh}
+        likedIds={likedIds}
+      />
 
-      <section>
-        <SectionHeading
-          align="left"
-          eyebrow={isNewUser ? "Discover" : "Just landed"}
-          title="Fresh drops"
-          description="The newest tracks added to the catalog."
-        />
-        <div className="mt-6">
-          <TrackGrid tracks={fresh} likedIds={likedIds} />
-        </div>
-      </section>
-
-      {favoriteTracks.length > 0 && (
-        <section>
-          <SectionHeading
-            align="left"
-            eyebrow="Made for you"
-            title="From your library"
-            description={`You've loved ${favoriteCount} tracks — pick up where you left off.`}
-          />
-          <div className="mt-6">
-            <TrackGrid tracks={favoriteTracks.slice(0, 10)} likedIds={likedIds} />
-          </div>
-        </section>
-      )}
-
-      <section>
+      <section className="space-y-12">
         <SectionHeading
           align="left"
           eyebrow="Explore"
           title="Browse by subgenre"
-          description="Every track on Phonq is classified into one of these phonk subgenres."
+          description="Every track on Phonq is classified into one of these phonk subgenres. Scroll a row to preview — tap See all to dive in."
         />
-        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {PHONK_SUBGENRES.map((subgenre) => {
-            const Icon = subgenre.icon;
-            return (
-              <Link
-                key={subgenre.slug}
-                href={`/app/genres/${subgenre.slug}`}
-                className="flex items-center gap-3 rounded-xl border border-border bg-card p-3.5 transition-colors hover:border-primary/50 hover:bg-muted/30"
-              >
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <Icon className="size-4" aria-hidden="true" />
-                </span>
-                <span className="truncate text-sm font-medium">{subgenre.name}</span>
-              </Link>
-            );
-          })}
+        <div className="space-y-12">
+          {subgenreRows.map(({ subgenre, tracks }) => (
+            <TrackStrip
+              key={subgenre.slug}
+              icon={subgenre.icon}
+              eyebrow={subgenre.group}
+              title={subgenre.name}
+              description={subgenre.aka}
+              tracks={tracks}
+              likedIds={likedIds}
+              seeAllHref={`/app/genres/${subgenre.slug}`}
+            />
+          ))}
         </div>
       </section>
 

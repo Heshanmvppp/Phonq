@@ -350,6 +350,36 @@ function curatedTracks<T extends Track>(tracks: T[], opts: { subgenre?: string }
   });
 }
 
+/** Pull up to two upstream pages so classification has a bigger pool to draw
+ * from — a single 100-track page frequently curates down below the window a
+ * caller asks for, which is what made feeds feel sparse. */
+async function fetchCuratedCandidates(
+  params: {
+    search?: string;
+    tags: string[];
+    boost?: string;
+    order?: string;
+    subgenre?: string;
+  },
+  desired: number,
+): Promise<Track[]> {
+  const candidates: Track[] = [];
+  for (const offset of [0, 100]) {
+    const batch = await jamendo.fetchTracks({
+      search: params.search,
+      tags: params.tags,
+      boost: params.boost,
+      order: params.order,
+      limit: 100,
+      offset,
+    });
+    await cacheTracks(batch);
+    candidates.push(...curatedTracks(batch, { subgenre: params.subgenre }));
+    if (batch.length < 100 || candidates.length >= desired) break;
+  }
+  return candidates;
+}
+
 async function queryDbTracks(opts: QueryOptions): Promise<Track[] | null> {
   try {
     const where: Record<string, unknown> = {};
@@ -455,25 +485,20 @@ export async function fetchTracks(params: TracksParams = {}): Promise<Track[]> {
       await writeSuccessStatus();
       return tracks;
     }
-    // Over-fetch from the top so curation (classification) can fill the
-    // requested page; the offset window is applied locally after curation so
-    // pages stay aligned with the same ranked, curated list.
+    // Over-fetch so curation (classification) can fill the requested page; the
+    // offset window is applied locally after curation so pages stay aligned
+    // with the same ranked, curated list.
     const start = opts.offset ?? 0;
     const pageSize = opts.limit ?? 24;
-    const scaledLimit = Math.min((start + pageSize) * 5, 100);
     const tags = opts.subgenre
       ? (getSubgenre(opts.subgenre)?.jamendoTags ?? PHONK_FAMILY_QUERY_TAGS)
       : (params.tags && params.tags.length > 0 ? params.tags : PHONK_FAMILY_QUERY_TAGS);
-    const tracks = await jamendo.fetchTracks({
-      search: opts.search,
-      tags,
-      boost: params.boost,
-      order: params.order,
-      limit: scaledLimit,
-    });
-    await cacheTracks(tracks);
+    const tracks = await fetchCuratedCandidates(
+      { search: opts.search, tags, boost: params.boost, order: params.order, subgenre: opts.subgenre },
+      start + pageSize,
+    );
     await writeSuccessStatus();
-    return curatedTracks(tracks, { subgenre: opts.subgenre }).slice(start, start + pageSize);
+    return tracks.slice(start, start + pageSize);
   } catch (err) {
     await writeFailureStatus(err);
     const cached = await queryDbTracks(opts);
@@ -584,10 +609,17 @@ export async function fetchFreshDrops(limit = 24): Promise<Track[]> {
 export async function searchTracks(query: string, limit = 30, subgenre?: string): Promise<Track[]> {
   if (!query.trim()) return [];
   try {
-    const tracks = await jamendo.searchTracks(query, Math.min(limit * 4, 100), subgenre);
-    await cacheTracks(tracks);
+    const tags = subgenre ? (getSubgenre(subgenre)?.jamendoTags ?? PHONK_FAMILY_QUERY_TAGS) : PHONK_FAMILY_QUERY_TAGS;
+    const first = await jamendo.searchTracks(query, Math.min(limit * 4, 100), subgenre);
+    await cacheTracks(first);
+    const candidates = [...curatedTracks(first, { subgenre })];
+    if (candidates.length < limit && first.length >= 100) {
+      const second = await jamendo.fetchTracks({ search: query.trim(), tags, limit: 100, offset: 100 });
+      await cacheTracks(second);
+      candidates.push(...curatedTracks(second, { subgenre }));
+    }
     await writeSuccessStatus();
-    return curatedTracks(tracks, { subgenre }).slice(0, limit);
+    return candidates.slice(0, limit);
   } catch (err) {
     await writeFailureStatus(err);
     const cached = await queryDbTracks({ search: query.trim(), limit, subgenre, phonkOnly: true });
