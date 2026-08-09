@@ -41,9 +41,6 @@ export function UserMenu({ name, email, image }: UserMenuProps) {
         <p className="mt-0.5 text-xs font-normal normal-case tracking-normal text-muted-foreground">{displayEmail}</p>
       </DropdownMenuLabel>
       <DropdownMenuSeparator />
-      <DropdownMenuItem icon={<User />} onClick={() => router.push("/app/settings")}>
-        Profile settings
-      </DropdownMenuItem>
       <DropdownMenuItem icon={<Settings />} onClick={() => router.push("/app/settings")}>
         Settings
       </DropdownMenuItem>

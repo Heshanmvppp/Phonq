@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
     fetchFreshDrops: vi.fn(),
     searchTracks: vi.fn(),
   },
+  youtube: {
+    fetchVideosByIds: vi.fn(),
+  },
   prisma: {
     catalogStatus: {
       upsert: vi.fn().mockResolvedValue(undefined),
@@ -23,6 +26,17 @@ const mocks = vi.hoisted(() => ({
       upsert: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
     },
+    youTubeVideo: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    youTubeQuota: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockResolvedValue({}),
+    },
+    youTubeVideoMapping: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockResolvedValue({}),
+    },
     $transaction: vi.fn(async (ops: unknown[]) => {
       await Promise.all((ops as (() => Promise<unknown>)[]).map((op) => op()));
       return [];
@@ -32,9 +46,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/jamendo", () => mocks.jamendo);
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/youtube", () => ({
+  ...mocks.youtube,
+  __esModule: true,
+}));
 
 import * as jamendo from "@/lib/jamendo";
-import { fetchFreshDrops, fetchRadios, fetchTracks, fetchTrendingPhonk, getCatalogStatus, searchTracks } from "@/lib/catalog";
+import * as youtube from "@/lib/youtube";
+import { fetchTracksByIds, fetchTrack, fetchFreshDrops, fetchRadios, fetchTracks, fetchTrendingPhonk, getCatalogStatus, searchTracks } from "@/lib/catalog";
 
 const liveTracks = [
   {
@@ -236,5 +255,55 @@ describe("catalog fallback ladder", () => {
     await fetchTrendingPhonk(5).catch(() => undefined);
     const status = await getCatalogStatus();
     expect(status.provider).toBe("degraded");
+  });
+});
+
+describe("YouTube id resolution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.prisma.cachedTrack.findMany.mockResolvedValue([]);
+    mocks.youtube.fetchVideosByIds.mockResolvedValue([]);
+  });
+
+  const ytVideo = {
+    videoId: "dQw4w9WgXcQ",
+    title: "Never Gonna Give You Up",
+    artistName: "Rick Astley",
+    duration: 213,
+    thumbnail: "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
+    channelId: "UCE_M8A5yxnLfW0KghEeajjw",
+    channelTitle: "RickAstley",
+    embeddable: true,
+    subgenre: "brazilian",
+    source: "playlist",
+  };
+
+  it("resolves yt: ids through the YouTube table for favorites/history/playlists", async () => {
+    mocks.youtube.fetchVideosByIds.mockResolvedValue([ytVideo]);
+    vi.mocked(jamendo.fetchTracks).mockResolvedValue([]);
+
+    const tracks = await fetchTracksByIds(["1", "yt:dQw4w9WgXcQ"]);
+    expect(mocks.youtube.fetchVideosByIds).toHaveBeenCalledWith(["dQw4w9WgXcQ"]);
+    expect(tracks).toContainEqual(
+      expect.objectContaining({ id: "yt:dQw4w9WgXcQ", name: "Never Gonna Give You Up", source: "youtube", videoId: "dQw4w9WgXcQ" }),
+    );
+  });
+
+  it("fetchTrack resolves a YouTube track id with no upstream call", async () => {
+    mocks.youtube.fetchVideosByIds.mockResolvedValue([ytVideo]);
+    vi.mocked(jamendo.fetchTracks).mockResolvedValue([]);
+
+    const track = await fetchTrack("yt:dQw4w9WgXcQ");
+    expect(track).not.toBeNull();
+    expect(track?.id).toBe("yt:dQw4w9WgXcQ");
+    expect(track?.source).toBe("youtube");
+    expect(mocks.youtube.fetchVideosByIds).toHaveBeenCalledWith(["dQw4w9WgXcQ"]);
+    expect(jamendo.fetchTracks).not.toHaveBeenCalled();
+  });
+
+  it("fetchTrack returns null when the YouTube video is gone", async () => {
+    mocks.youtube.fetchVideosByIds.mockResolvedValue([]);
+    const track = await fetchTrack("yt:missing123");
+    expect(track).toBeNull();
   });
 });
