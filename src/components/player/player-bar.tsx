@@ -84,7 +84,7 @@ export function PlayerBar() {
   const [incomingTrack, setIncomingTrack] = React.useState<Track | null>(null);
   const [isCrossfading, setIsCrossfading] = React.useState(false);
 
-  if (currentTrack?.id !== currentTrackId) {
+  if ((currentTrack?.id ?? null) !== currentTrackId) {
     setCurrentTrackId(currentTrack?.id ?? null);
     setScrubValue(0);
     setIsScrubbing(false);
