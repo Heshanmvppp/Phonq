@@ -166,6 +166,48 @@ function freshCacheIds(ids: string[]): string[] {
   });
 }
 
+/**
+ * Jamendo name-searches often return a track with a thinner tag set than the
+ * tag-query browse that originally classified it. If we classified from the live
+ * tags alone, a previously-played (cached + classified) track can vanish from
+ * search results. To keep search stable we union each live result with whatever
+ * tags are already cached for its id, then re-derive the subgenre from the
+ * merged set. Safe no-op when the DB is down (returns the tracks unchanged).
+ */
+async function enrichWithCachedTags(tracks: Track[]): Promise<Track[]> {
+  if (tracks.length === 0) return tracks;
+  const idSet = new Set<string>();
+  for (const t of tracks) idSet.add(t.id);
+  const ids = [...idSet];
+  let cachedTags: { id: string; tags: string | null }[] = [];
+  try {
+    cachedTags = await prisma.cachedTrack.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, tags: true },
+    });
+  } catch {
+    return tracks;
+  }
+  const byId = new Map<string, string>();
+  for (const row of cachedTags) {
+    if (row.tags) byId.set(row.id, row.tags);
+  }
+
+  return tracks.map((track) => {
+    const cached = byId.get(track.id);
+    if (!cached) return track;
+    const merged = unionTags(track.tags, cached.split(/\s+/).filter(Boolean));
+    return { ...track, tags: merged, subgenre: classifyTrack({ ...track, tags: merged })?.slug ?? track.subgenre ?? null };
+  });
+}
+
+/** Stable, deduplicated union of two tag arrays. */
+function unionTags(a: string[], b: string[]): string[] {
+  const set = new Set(a.map((t) => t.toLowerCase()));
+  for (const t of b) set.add(t.toLowerCase());
+  return [...set];
+}
+
 async function cacheTracks(tracks: Track[]): Promise<void> {
   if (tracks.length === 0) return;
   const ids = freshCacheIds(tracks.map((t) => t.id));
@@ -197,6 +239,7 @@ async function cacheTracks(tracks: Track[]): Promise<void> {
     audioDownloadAllowed: t.audioDownloadAllowed,
     source: "jamendo",
   }));
+
   try {
     // Upsert per row so the cache refreshes popularity/licensing over time.
     // Throttled per-id (5 min) by `freshCacheIds`, so this stays cheap.
@@ -612,12 +655,14 @@ export async function searchTracks(query: string, limit = 30, subgenre?: string)
   try {
     const tags = subgenre ? (getSubgenre(subgenre)?.jamendoTags ?? PHONK_FAMILY_QUERY_TAGS) : PHONK_FAMILY_QUERY_TAGS;
     const first = await jamendo.searchTracks(query, Math.min(limit * 4, 100), subgenre);
-    await cacheTracks(first);
-    const candidates = [...curatedTracks(first, { subgenre })];
-    if (candidates.length < limit && first.length >= 100) {
+    const enriched = await enrichWithCachedTags(first);
+    await cacheTracks(enriched);
+    const candidates = [...curatedTracks(enriched, { subgenre })];
+    if (candidates.length < limit && enriched.length >= 100) {
       const second = await jamendo.fetchTracks({ search: query.trim(), tags, limit: 100, offset: 100 });
-      await cacheTracks(second);
-      candidates.push(...curatedTracks(second, { subgenre }));
+      const enriched2 = await enrichWithCachedTags(second);
+      await cacheTracks(enriched2);
+      candidates.push(...curatedTracks(enriched2, { subgenre }));
     }
     await writeSuccessStatus();
     return candidates.slice(0, limit);

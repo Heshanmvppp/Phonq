@@ -198,6 +198,32 @@ describe("catalog fallback ladder", () => {
     expect(result.map((t) => t.id)).toEqual(["200"]);
   });
 
+  it("surfaces a previously-cached track even when name-search returns sparse tags", async () => {
+    // Live name-search comes back thin: "funk" alone fails the phonk gate.
+    vi.mocked(jamendo.searchTracks).mockResolvedValue([
+      { ...liveTracks[0], id: "300", name: "Brasil Funk", tags: ["funk"], bpm: 145 },
+    ]);
+    // The cache (written during a prior tag-query browse) holds the full tags.
+    mocks.prisma.cachedTrack.findMany.mockResolvedValue([
+      { id: "300", tags: "phonk brazilian funk baile" },
+    ]);
+
+    const result = await searchTracks("brasil funk", 10);
+    expect(result.map((t) => t.id)).toEqual(["300"]);
+    expect(result[0].subgenre).toBe("brazilian");
+  });
+
+  it("drops genuinely non-phonk tracks even when name-search is sparse", async () => {
+    vi.mocked(jamendo.searchTracks).mockResolvedValue([
+      { ...liveTracks[0], id: "400", name: "Summer Vibes", tags: ["funk"], genre: "funk", bpm: 120 },
+      { ...liveTracks[0], id: "401", name: "Another Funk", tags: ["funk"], genre: "funk", bpm: 125 },
+    ]);
+    // No cache entries -> nothing to enrich with -> both stay below the gate.
+    mocks.prisma.cachedTrack.findMany.mockResolvedValue([]);
+    const result = await searchTracks("funk", 10);
+    expect(result).toHaveLength(0);
+  });
+
   it("searches the static snapshot when search fails", async () => {
     vi.mocked(jamendo.searchTracks).mockRejectedValue(new Error("boom"));
     mocks.prisma.cachedTrack.findMany.mockRejectedValue(new Error("no database"));

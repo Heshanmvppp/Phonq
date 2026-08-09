@@ -46,6 +46,34 @@ const PlayerContext = React.createContext<PlayerContextValue | null>(null);
 
 const VOLUME_KEY = "phonq:volume";
 
+const JAMENDO_STREAM_HOSTS = new Set([
+  "api.jamendo.com",
+  "prod-1.storage.jamendo.com",
+  "prod-2.storage.jamendo.com",
+  "prod-3.storage.jamendo.com",
+  "mp3.jamendo.com",
+  "mp3d.jamendo.com",
+]);
+
+/**
+ * Routes a Jamendo stream through our CORS-safe proxy so the browser can play
+ * it (Jamendo's CDN serves tracks without `Access-Control-Allow-Origin`).
+ * Non-Jamendo URLs are passed through untouched.
+ */
+function proxiedAudioUrl(track: Track | null): string {
+  if (!track?.audioUrl) return "";
+  try {
+    const u = new URL(track.audioUrl);
+    if (u.protocol === "https:" && JAMENDO_STREAM_HOSTS.has(u.host)) {
+      return `/api/audio?url=${encodeURIComponent(track.audioUrl)}`;
+    }
+  } catch {
+    /* fall through */
+  }
+  return track.audioUrl;
+}
+
+
 function shuffledIndex(current: number, length: number): number {
   if (length <= 1) return current;
   let next = current;
@@ -138,6 +166,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   /** Probes whether a Jamendo storage origin allows cross-origin audio (per-origin, once). */
   const probeCors = React.useCallback(async (url: string): Promise<boolean> => {
+    // Same-origin (e.g. our `/api/audio` proxy) never needs CORS preflight; the
+    // browser can read media from the same origin without an ACAO header.
+    if (!url || url.startsWith("/") || (typeof window !== "undefined" && url.startsWith(window.location.origin))) {
+      return true;
+    }
     let origin: string;
     try {
       origin = new URL(url).origin;
@@ -330,7 +363,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const track = currentTrack;
     if (!audio || !track) return;
 
-    const url = track.audioUrl;
+     const url = proxiedAudioUrl(track);
     pendingUrlRef.current = url;
     setCurrentTime(0);
     setDuration(0);
@@ -340,7 +373,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (pendingUrlRef.current !== url) return;
       const el = audioRef.current;
       if (!el) return;
-      if (allowed) el.crossOrigin = "anonymous";
       if (el.src !== url) {
         el.src = url;
         el.load();
@@ -370,7 +402,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (nextIndex < 0 || nextIndex >= len) return;
     const nextTrack = q[nextIndex];
     if (!nextTrack || nextTrack.id === track.id) return;
-    const url = nextTrack.audioUrl;
+     const url = proxiedAudioUrl(nextTrack);
     preloadedNextRef.current = { index: nextIndex, url };
     void probeCors(url).then((allowed) => {
       if (preloadedNextRef.current?.url !== url) return;
@@ -382,7 +414,6 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const el = new Audio();
       preloadAudioRef.current = el;
       el.preload = "auto";
-      if (allowed) el.crossOrigin = "anonymous";
       el.src = url;
       el.load();
     });
