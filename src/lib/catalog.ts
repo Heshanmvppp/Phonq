@@ -27,6 +27,8 @@ import { prisma } from "@/lib/prisma";
 import { classifyTrack, getSubgenre, PHONK_FAMILY_QUERY_TAGS, PHONK_SUBGENRES } from "@/lib/phonk-genres";
 import { FEATURED_TRACKS } from "@/content/featured-tracks";
 import type { FeaturedTrack } from "@/content/featured-types";
+import * as youtube from "@/lib/youtube";
+import type { YouTubeVideo } from "@/lib/youtube";
 
 export type CatalogProvider = "live" | "degraded" | "static";
 
@@ -368,6 +370,68 @@ const staticRadios: Radio[] = PHONK_SUBGENRES.map((subgenre) => ({
   subgenre: subgenre.slug,
 }));
 
+/* ------------------------------------------------------------------ */
+/* YouTube adapter (hybrid catalog fill)                               */
+/* ------------------------------------------------------------------ */
+
+/** Convert a cached YouTube video into a `Track` for playback via the IFrame
+ * Player API. Kept on the Jamendo `Track` shape so the whole app (queue,
+ * favorites, playlists, player bar) treats both sources identically. */
+function youtubeToTrack(video: YouTubeVideo): Track {
+  return {
+    id: `yt:${video.videoId}`,
+    name: video.title,
+    duration: video.duration,
+    artistId: video.channelId ?? `yt:${video.videoId}`,
+    artistName: video.artistName || video.channelTitle || "Unknown Artist",
+    albumId: "",
+    albumName: "",
+    audioUrl: "",
+    downloadUrl: "",
+    image: video.thumbnail,
+    imageSmall: video.thumbnail,
+    licenseName: "YouTube",
+    genre: null,
+    bpm: null,
+    speed: null,
+    vocalInstrumental: null,
+    tags: video.subgenre ? [video.subgenre] : [],
+    popularityWeek: 0,
+    popularityTotal: 0,
+    listensTotal: 0,
+    downloadsTotal: 0,
+    releaseDate: null,
+    audioDownloadAllowed: false,
+    subgenre: video.subgenre,
+    source: "youtube",
+    videoId: video.videoId,
+    videoThumbnail: video.thumbnail,
+  };
+}
+
+/** Resolve a Jamendo track to its YouTube equivalent (DB-first, cheap). */
+export async function resolveYouTubeForTrack(
+  track: Pick<Track, "name" | "artistName" | "source" | "subgenre">,
+  subgenre?: string,
+): Promise<Track | null> {
+  if (track.source === "youtube") return track as Track;
+  const video = await youtube.resolveSongVideo(track.name, track.artistName, subgenre ?? track.subgenre ?? undefined);
+  if (!video) return null;
+  return youtubeToTrack(video);
+}
+
+/** Cached YouTube videos for a subgenre, converted to `Track`s (genre-gap fill). */
+export async function fetchYouTubeFill(subgenre: string, limit = 12): Promise<Track[]> {
+  if (!getSubgenre(subgenre)) return [];
+  const videos = await youtube.fetchCachedSubgenreVideos(subgenre, limit);
+  return videos.map(youtubeToTrack).slice(0, limit);
+}
+
+/** Daily YouTube search budget status, for the health/admin surface. */
+export async function getYouTubeQuota(): Promise<youtube.YouTubeQuotaStatus> {
+  return youtube.getYouTubeQuotaStatus();
+}
+
 interface QueryOptions {
   ids?: string[];
   search?: string;
@@ -552,6 +616,10 @@ export async function fetchTracks(params: TracksParams = {}): Promise<Track[]> {
 }
 
 export async function fetchTrack(id: string): Promise<Track | null> {
+  if (id.startsWith("yt:")) {
+    const [video] = await youtube.fetchVideosByIds([id.slice(3)]);
+    return video ? youtubeToTrack(video) : null;
+  }
   const [track] = await fetchTracks({ ids: [id], limit: 1 });
   return track ?? null;
 }
@@ -559,10 +627,20 @@ export async function fetchTrack(id: string): Promise<Track | null> {
 export async function fetchTracksByIds(ids: string[]): Promise<Track[]> {
   const unique = [...new Set(ids.filter(Boolean))];
   if (unique.length === 0) return [];
+
+  // YouTube tracks are stored under `yt:<videoId>` and live in `youtube_videos`
+  // (not `cached_tracks`), so resolve them through the YouTube table directly.
+  const youtubeIds = unique.filter((id) => id.startsWith("yt:"));
+  const jamendoIds = unique.filter((id) => !id.startsWith("yt:"));
+
   const tracks: Track[] = [];
-  for (let i = 0; i < unique.length; i += 100) {
-    const chunk = unique.slice(i, i + 100);
+  for (let i = 0; i < jamendoIds.length; i += 100) {
+    const chunk = jamendoIds.slice(i, i + 100);
     tracks.push(...(await fetchTracks({ ids: chunk, limit: chunk.length })));
+  }
+  if (youtubeIds.length > 0) {
+    const videos = await youtube.fetchVideosByIds(youtubeIds.map((id) => id.slice(3)));
+    tracks.push(...videos.map(youtubeToTrack));
   }
   return tracks;
 }
@@ -677,5 +755,12 @@ export async function searchTracks(query: string, limit = 30, subgenre?: string)
 /** Tracks for a single phonk subgenre page. Returns [] for an unknown slug. */
 export async function fetchSubgenreTracks(slug: string, limit = 24): Promise<Track[]> {
   if (!getSubgenre(slug)) return [];
-  return fetchTracks({ subgenre: slug, limit, boost: "popularity_week" });
+  const jamendoTracks = await fetchTracks({ subgenre: slug, limit, boost: "popularity_week" });
+  // Genre-gap fill: when Jamendo's CC catalog is thin for this subgenre (e.g.
+  // Brazilian funk), top up the page from the cached YouTube seed (free reads —
+  // the bulk of the genre was backfilled once with playlistItems.list). Keeps
+  // Jamendo primary (legal, direct audio) while YouTube covers the gaps.
+  if (jamendoTracks.length >= limit) return jamendoTracks;
+  const fill = await fetchYouTubeFill(slug, limit - jamendoTracks.length);
+  return [...jamendoTracks, ...fill];
 }

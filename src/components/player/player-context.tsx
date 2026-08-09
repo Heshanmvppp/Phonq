@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { useSession } from "next-auth/react";
 
+import { YouTubeEngine, type YouTubeEngineHandle, type YouTubeEngineState } from "@/components/player/youtube-engine";
 import type { Track } from "@/lib/jamendo";
 
 type RepeatMode = "off" | "all" | "one";
@@ -87,6 +88,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const { status: sessionStatus } = useSession();
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
   const analyserRef = React.useRef<AnalyserNode | null>(null);
+  const youtubeRef = React.useRef<YouTubeEngineHandle | null>(null);
   const corsCacheRef = React.useRef(new Map<string, boolean>());
   const pendingUrlRef = React.useRef<string | null>(null);
   const lastReportedRef = React.useRef<string | null>(null);
@@ -114,6 +116,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const shuffleRef = React.useRef(shuffle);
   const repeatRef = React.useRef(repeat);
   const currentTrackRef = React.useRef<Track | null>(null);
+  const currentTimeRef = React.useRef(0);
+  const durationRef = React.useRef(0);
+  const volumeRef = React.useRef(volume);
   const preloadAudioRef = React.useRef<HTMLAudioElement | null>(null);
   const preloadedNextRef = React.useRef<{ index: number; url: string } | null>(null);
 
@@ -135,6 +140,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     currentTrackRef.current = currentTrack;
   }, [currentTrack]);
+
+  React.useEffect(() => {
+    currentTimeRef.current = currentTime;
+  }, [currentTime]);
+
+  React.useEffect(() => {
+    durationRef.current = duration;
+  }, [duration]);
+
+  React.useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
 
   /** Refetches the signed-in user's favorite ids so the player-bar heart stays in sync. */
   React.useEffect(() => {
@@ -303,6 +320,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (nextQueue.length === 0) {
         const audio = audioRef.current;
         if (audio) audio.pause();
+        youtubeRef.current?.pause();
         setIsPlaying(false);
         setQueueIndex(-1);
       } else {
@@ -314,12 +332,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const clearQueue = React.useCallback(() => {
     const audio = audioRef.current;
     if (audio) audio.pause();
+    youtubeRef.current?.pause();
     setQueue([]);
     setQueueIndex(-1);
     setIsPlaying(false);
   }, []);
 
   const seek = React.useCallback((time: number) => {
+    if (currentTrackRef.current?.source === "youtube") {
+      youtubeRef.current?.seekTo(time);
+      setCurrentTime(time);
+      return;
+    }
     const audio = audioRef.current;
     if (audio) {
       audio.currentTime = time;
@@ -331,6 +355,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const clamped = Math.max(0, Math.min(1, value));
     setVolumeState(clamped);
     if (audioRef.current) audioRef.current.volume = clamped;
+    youtubeRef.current?.setVolume(clamped);
     try {
       window.localStorage.setItem(VOLUME_KEY, String(clamped));
     } catch {
@@ -348,26 +373,48 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const togglePlay = React.useCallback(() => {
+    const track = currentTrackRef.current;
+    if (!track) return;
+    if (track.source === "youtube") {
+      if (isPlaying) youtubeRef.current?.pause();
+      else youtubeRef.current?.play();
+      return;
+    }
     const audio = audioRef.current;
-    if (!audio || !currentTrackRef.current) return;
+    if (!audio) return;
     if (audio.paused) {
       void audio.play().catch(() => setIsPlaying(false));
     } else {
       audio.pause();
     }
-  }, []);
+  }, [isPlaying]);
 
   /** Load and play whenever the current track changes. */
   React.useEffect(() => {
     const audio = audioRef.current;
     const track = currentTrack;
-    if (!audio || !track) return;
+    const isYouTube = track?.source === "youtube";
+    if (!track) return;
+    if (!isYouTube && !audio) return;
 
-     const url = proxiedAudioUrl(track);
-    pendingUrlRef.current = url;
+    // YouTube tracks have no direct stream — the IFrame engine loads the video
+    // itself from the `videoId` prop and reports state back through callbacks.
+    pendingUrlRef.current = isYouTube ? null : proxiedAudioUrl(track);
     setCurrentTime(0);
     setDuration(0);
     setIsLoading(true);
+    if (isYouTube) {
+      // Stop any track still playing through the native audio element (e.g. the
+      // previous Jamendo track) so it doesn't continue under the YouTube video.
+      if (audio) {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+      }
+      return;
+    }
+
+    const url = proxiedAudioUrl(track);
 
     void probeCors(url).then((allowed) => {
       if (pendingUrlRef.current !== url) return;
@@ -402,7 +449,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (nextIndex < 0 || nextIndex >= len) return;
     const nextTrack = q[nextIndex];
     if (!nextTrack || nextTrack.id === track.id) return;
-     const url = proxiedAudioUrl(nextTrack);
+    if (nextTrack.source === "youtube") return; // IFrame engine preloads on its own
+    const url = proxiedAudioUrl(nextTrack);
     preloadedNextRef.current = { index: nextIndex, url };
     void probeCors(url).then((allowed) => {
       if (preloadedNextRef.current?.url !== url) return;
@@ -450,29 +498,25 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
       switch (event.key) {
         case "ArrowRight": {
-          const audio = audioRef.current;
-          if (!audio) return;
+          if (!currentTrackRef.current) return;
           event.preventDefault();
-          seek(Math.min(audio.duration || 0, audio.currentTime + 5));
+          seek(Math.min(durationRef.current || 0, currentTimeRef.current + 5));
           break;
         }
         case "ArrowLeft": {
-          const audio = audioRef.current;
-          if (!audio) return;
+          if (!currentTrackRef.current) return;
           event.preventDefault();
-          seek(Math.max(0, audio.currentTime - 5));
+          seek(Math.max(0, currentTimeRef.current - 5));
           break;
         }
         case "ArrowUp": {
           event.preventDefault();
-          const audio = audioRef.current;
-          setVolume((audio ? audio.volume : 0) + 0.05);
+          setVolume(volumeRef.current + 0.05);
           break;
         }
         case "ArrowDown": {
           event.preventDefault();
-          const audio = audioRef.current;
-          setVolume((audio ? audio.volume : 0) - 0.05);
+          setVolume(volumeRef.current - 0.05);
           break;
         }
         case "m":
@@ -551,6 +595,72 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     };
   }, [next, reportHistory]);
 
+  /** State reported by the YouTube IFrame engine → shared player state. */
+  const onYouTubeStateChange = React.useCallback((state: YouTubeEngineState) => {
+    if (state.currentTime !== currentTimeRef.current) setCurrentTime(state.currentTime);
+    if (state.duration !== durationRef.current) setDuration(state.duration);
+    if (state.isLoading) setIsLoading(true);
+    else if (state.isPlaying) {
+      setIsPlaying(true);
+      setIsLoading(false);
+      reportHistory();
+    } else {
+      setIsPlaying(false);
+      setIsLoading(false);
+    }
+  }, [reportHistory]);
+
+  /** Video ended in the YouTube engine — honour repeat, else advance. */
+  const onYouTubeEnded = React.useCallback(() => {
+    const track = currentTrackRef.current;
+    if (repeatRef.current === "one" && track?.source === "youtube") {
+      youtubeRef.current?.seekTo(0);
+      youtubeRef.current?.play();
+      return;
+    }
+    next();
+  }, [next]);
+
+  /** Media Session API — lock-screen / notification controls for mobile. */
+  React.useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const track = currentTrack;
+    const session = navigator.mediaSession;
+    if (track) {
+      const artwork = track.image ? [{ src: track.image, sizes: "512x512", type: "image/jpeg" }] : [];
+      try {
+        session.metadata = new MediaMetadata({
+          title: track.name,
+          artist: track.artistName,
+          album: track.albumName || undefined,
+          artwork,
+        });
+      } catch {
+        /* some browsers throw on MediaMetadata construction */
+      }
+    }
+    session.setActionHandler("play", () => togglePlay());
+    session.setActionHandler("pause", () => togglePlay());
+    session.setActionHandler("previoustrack", () => previous());
+    session.setActionHandler("nexttrack", () => next());
+    return () => {
+      session.setActionHandler("play", null);
+      session.setActionHandler("pause", null);
+      session.setActionHandler("previoustrack", null);
+      session.setActionHandler("nexttrack", null);
+    };
+  }, [currentTrack, togglePlay, previous, next]);
+
+  /** Keep the lock-screen "playing" flag in sync with actual playback. */
+  React.useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+    } catch {
+      /* ignore */
+    }
+  }, [isPlaying]);
+
   const value = React.useMemo<PlayerContextValue>(
     () => ({
       queue,
@@ -617,9 +727,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     ],
   );
 
+  /** Whether the current track plays through the YouTube IFrame engine. */
+  const isYouTubeTrack = currentTrack?.source === "youtube";
+
   return (
     <PlayerContext.Provider value={value}>
       <audio ref={audioRef} preload="none" className="hidden" />
+      <YouTubeEngine
+        ref={youtubeRef}
+        videoId={isYouTubeTrack ? (currentTrack?.videoId ?? null) : null}
+        volume={volume}
+        muted={muted}
+        onStateChange={onYouTubeStateChange}
+        onEnded={onYouTubeEnded}
+      />
       {children}
     </PlayerContext.Provider>
   );

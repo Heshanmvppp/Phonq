@@ -108,6 +108,12 @@ npm run dev          # → http://localhost:3000
 > [devportal.jamendo.com](https://devportal.jamendo.com). Without one, the app degrades
 > gracefully: it serves whatever is cached in Postgres, then a bundled static snapshot,
 > and surfaces a friendly "catalog is refreshing" message instead of a raw API error.
+>
+> **YouTube key (optional)**: set `YOUTUBE_API_KEY` to enable the hybrid catalog. Jamendo
+> stays the default (legal, direct audio, no quota), and YouTube fills genre gaps — e.g.
+> Brazilian funk — with tracks played through the YouTube IFrame Player API. Searches are
+> cached in Postgres (`youtube_video_mappings`), so the 100 searches/day free budget lasts
+> indefinitely once the catalog is seeded. See [.env.example](.env.example).
 
 ## 📦 Scripts
 
@@ -120,6 +126,7 @@ npm run dev          # → http://localhost:3000
 | `npm run typecheck`   | `tsc --noEmit`                         |
 | `npm test`            | Run the Vitest suite                   |
 | `npm run sync:featured` | Refresh the static fallback snapshot with real Jamendo data |
+| `npm run sync:youtube`  | Bulk-seed a genre from a YouTube playlist (playlistItems.list) |
 | `npm run db:generate` | `prisma generate`                      |
 | `npm run db:deploy`   | `prisma migrate deploy`                |
 | `npm run db:studio`   | Open Prisma Studio                     |

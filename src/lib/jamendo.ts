@@ -87,6 +87,16 @@ export interface Track {
    * platform phonk-only.
    */
   subgenre?: string | null;
+  /**
+   * Where the track's audio comes from. "jamendo" (default) tracks play through
+   * the proxied `<audio>` element; "youtube" tracks have no direct stream and
+   * play through the YouTube IFrame Player API.
+   */
+  source?: "jamendo" | "youtube";
+  /** YouTube video id when `source` is "youtube". */
+  videoId?: string | null;
+  /** Thumbnail for a YouTube-sourced track (maps to `image` when present). */
+  videoThumbnail?: string | null;
 }
 
 export interface Radio {
@@ -218,6 +228,9 @@ export function normalizeTrack(t: JamendoTrack): Track {
       tags: (t.tags ?? "").split(/\s+/).filter(Boolean),
       vocalInstrumental: t.musicinfo?.vocalinstrumental ?? null,
     })?.slug ?? null,
+    source: "jamendo",
+    videoId: null,
+    videoThumbnail: null,
   };
 }
 

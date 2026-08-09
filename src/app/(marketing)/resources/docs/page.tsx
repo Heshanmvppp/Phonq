@@ -40,6 +40,17 @@ npx prisma migrate dev
 npx prisma generate`,
   },
   {
+    title: "Optional: YouTube hybrid fill",
+    icon: Server,
+    code: `# .env — enables YouTube genre-gap fill (e.g. Brazilian funk)
+YOUTUBE_API_KEY=your_google_cloud_api_key
+
+# Bulk-seed a genre from an uploads/curated playlist (cheap, 1 unit/page):
+npm run sync:youtube -- --playlist=<playlistId> --subgenre=brazilian
+
+# Searches are cached in Postgres, so the 100/day search budget lasts forever.`,
+  },
+  {
     title: "Run locally",
     icon: Terminal,
     code: `npm install

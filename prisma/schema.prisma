@@ -11,19 +11,19 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-  accounts      Account[]
-  sessions      Session[]
+  id             String          @id @default(cuid())
+  name           String?
+  email          String?         @unique
+  emailVerified  DateTime?
+  image          String?
+  accounts       Account[]
+  sessions       Session[]
   authenticators Authenticator[]
-  playlists     Playlist[]
-  favorites     Favorite[]
-  listens       Listen[]
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  playlists      Playlist[]
+  favorites      Favorite[]
+  listens        Listen[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   @@map("users")
 }
@@ -124,8 +124,8 @@ model Listen {
   listenedAt DateTime @default(now())
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId, listenedAt])
   @@unique([userId, trackId])
+  @@index([userId, listenedAt])
   @@map("listens")
 }
 
@@ -156,12 +156,76 @@ model CachedTrack {
   downloadsTotal       Int      @default(0)
   releaseDate          String?
   audioDownloadAllowed Boolean  @default(false)
-  source               String   @default("jamendo")
+  source               String   @default("jamendo") // "jamendo" | "youtube"
+  /// Set when `source` is "youtube": the YouTube video id used for playback via
+  /// the IFrame Player API (no direct audio stream exists for these tracks).
+  videoId              String?
   cachedAt             DateTime @default(now())
 
   @@index([cachedAt])
   @@index([artistName])
   @@map("cached_tracks")
+}
+
+/// YouTube lookup cache. Search results (search.list, 100 units) are stored
+/// permanently so a song's video mapping survives across users — once a song
+/// has been searched by anyone, later lookups only need a cheap videos.list
+/// (1 unit) to refresh metadata. Also stores playlist/channel-seeded items
+/// (playlistItems.list, 1 unit) for bulk backfilling genre gaps.
+model YouTubeVideo {
+  videoId      String                @id
+  title        String
+  artistName   String                @default("")
+  duration     Int                   @default(0)
+  thumbnail    String?
+  channelId    String?
+  channelTitle String?
+  embeddable   Boolean               @default(true)
+  /// Phonk subgenre slug when seeded for a genre gap, else null.
+  subgenre     String?
+  /// Where the video was discovered: "search" | "playlist" | "channel".
+  source       String                @default("search")
+  mappings     YouTubeVideoMapping[]
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  @@index([subgenre])
+  @@index([artistName])
+  @@map("youtube_videos")
+}
+
+/// song_title + artist → video_id resolution cache. The DB-first lookup skips
+/// search.list entirely on cache hits, turning the 100-search/day cap into
+/// effectively unlimited plays once the catalog is seeded.
+model YouTubeVideoMapping {
+  id        String       @id @default(cuid())
+  videoId   String
+  video     YouTubeVideo @relation(fields: [videoId], references: [videoId], onDelete: Cascade)
+  /// Normalized song title (lowercase, punctuation stripped).
+  songKey   String
+  /// Normalized artist (lowercase, punctuation stripped).
+  artistKey String
+  /// The raw search query that produced this mapping (for audit/debugging).
+  query     String
+  createdAt DateTime     @default(now())
+
+  @@unique([songKey, artistKey])
+  @@index([videoId])
+  @@map("youtube_video_mappings")
+}
+
+/// Rolling daily YouTube API quota ledger (units). Keeps search.list spending
+/// inside the free ~10k-units/day budget by refusing new searches once the
+/// daily search budget for the app is spent. videos.list / playlistItems.list
+/// are always allowed (they cost 1 unit each and the reads are cached).
+model YouTubeQuota {
+  id        Int    @id @default(1)
+  /// Calendar date (YYYY-MM-DD) the ledger covers.
+  date      String @unique
+  unitsUsed Int    @default(0)
+  searches  Int    @default(0)
+
+  @@map("youtube_quota")
 }
 
 /// Single-row catalog health/status flag. Lets the frontend and /api/health

@@ -6,19 +6,27 @@ import Image from "next/image";
 
 import { Music2, Pause, Play } from "lucide-react";
 
+import { YouTubeEngine, type YouTubeEngineHandle, type YouTubeEngineState } from "@/components/player/youtube-engine";
 import { formatDuration } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
 
 export function EmbedPlayer({ track }: { track: Track }) {
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
+  const youtubeRef = React.useRef<YouTubeEngineHandle | null>(null);
   const [playing, setPlaying] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [currentTime, setCurrentTime] = React.useState(0);
   const [duration, setDuration] = React.useState(0);
 
-  const hasAudio = Boolean(track.audioUrl);
+  const isYouTube = track.source === "youtube";
+  const hasAudio = isYouTube || Boolean(track.audioUrl);
 
   function toggle() {
+    if (isYouTube) {
+      if (playing) youtubeRef.current?.pause();
+      else youtubeRef.current?.play();
+      return;
+    }
     const audio = audioRef.current;
     if (!audio) return;
     if (audio.paused) {
@@ -29,11 +37,23 @@ export function EmbedPlayer({ track }: { track: Track }) {
   }
 
   function seek(value: number) {
+    if (isYouTube) {
+      youtubeRef.current?.seekTo(value);
+      setCurrentTime(value);
+      return;
+    }
     const audio = audioRef.current;
     if (!audio) return;
     audio.currentTime = value;
     setCurrentTime(value);
   }
+
+  const onYouTubeStateChange = React.useCallback((state: YouTubeEngineState) => {
+    setCurrentTime(state.currentTime);
+    setDuration(state.duration);
+    setLoading(state.isLoading);
+    setPlaying(state.isPlaying);
+  }, []);
 
   return (
     <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card shadow-2xl shadow-black/40">
@@ -103,21 +123,32 @@ export function EmbedPlayer({ track }: { track: Track }) {
           </p>
         )}
 
-        <audio
-          ref={audioRef}
-          preload="metadata"
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onWaiting={() => setLoading(true)}
-          onCanPlay={() => setLoading(false)}
-          onLoadedMetadata={(e) => setDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)}
-          onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-          src={hasAudio ? track.audioUrl : undefined}
-        />
+        {isYouTube ? (
+          <YouTubeEngine
+            ref={youtubeRef}
+            videoId={track.videoId ?? null}
+            volume={1}
+            muted={false}
+            onStateChange={onYouTubeStateChange}
+            onEnded={() => setPlaying(false)}
+          />
+        ) : (
+          <audio
+            ref={audioRef}
+            preload="metadata"
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onWaiting={() => setLoading(true)}
+            onCanPlay={() => setLoading(false)}
+            onLoadedMetadata={(e) => setDuration(Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0)}
+            onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+            src={track.audioUrl || undefined}
+          />
+        )}
       </div>
 
       <div className="flex items-center justify-between border-t border-border px-4 py-2">
-        <p className="text-[10px] text-muted-foreground">Streaming on Phonq</p>
+        <p className="text-[10px] text-muted-foreground">Streaming on Phonq{isYouTube ? " · YouTube" : ""}</p>
         {loading && <p className="text-[10px] text-primary">Buffering…</p>}
       </div>
     </div>

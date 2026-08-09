@@ -14,15 +14,20 @@ Browser
    └─ REST API ─────────────────── /api/*, /api/v1/*
             │
             ├─ Catalog layer (src/lib/catalog.ts)
-            │     ├─ Jamendo API (https://api.jamendo.com/v3.0) ── audio streams + metadata
+            │     ├─ Jamendo API (https://api.jamendo.com/v3.0) ── audio streams + metadata (default)
+            │     ├─ YouTube Data API (src/lib/youtube.ts) ── genre-gap fill via IFrame Player
+            │     │     ├─ Postgres `youtube_videos` + `youtube_video_mappings` ── search cache
+            │     │     └─ Postgres `youtube_quota` ── daily search budget ledger
             │     ├─ Postgres `cached_tracks` ── cache when upstream fails
             │     └─ Bundled static snapshot ── always-on fallback
             └─ Neon PostgreSQL (via Prisma + @prisma/adapter-neon) ── user data
 ```
 
-Music never touches our servers. The browser fetches audio streams directly from Jamendo's CDN,
-which is what makes serving the whole catalog effectively free. Playback therefore survives
-upstream outages — only the metadata feed degrades, falling back in a ladder (below).
+Music never touches our servers. Jamendo streams are fetched directly from their CDN
+(which is what makes serving the whole catalog free); YouTube-sourced tracks play through
+the official IFrame Player API (a 200×200 hidden-but-live element + our custom UI on top).
+Playback therefore survives upstream outages — only the metadata feed degrades, falling
+back in a ladder (below).
 
 ## Folders
 
@@ -51,20 +56,30 @@ outputs to `src/generated/prisma`. Tables:
 - `listens` — history (one row per user+track, updated with progress)
 - `cached_tracks` — last successful catalog responses (track lists), for the cache tier
 - `catalog_status` — single row recording last success/failure and the current provider
+- `youtube_videos` — YouTube videos cached for genre-gap fill (metadata + `source` = search|playlist)
+- `youtube_video_mappings` — song_title + artist → video_id cache; a hit skips `search.list`
+- `youtube_quota` — daily YouTube API quota ledger (units + search count), for the search budget
 
-The catalog is **not** a primary store. It lives on Jamendo, and Phonq degrades in a ladder:
-live Jamendo → `cached_tracks` (Postgres, written throttled on success) → bundled static
-snapshot in `src/content/featured-tracks.ts`. `getCatalogStatus()` reflects the active provider
-and never lets upstream error strings reach the UI (errors are logged server-side only).
+The catalog is **not** a primary store. It lives on Jamendo (with YouTube filling genre
+gaps), and Phonq degrades in a ladder: live Jamendo → `cached_tracks` (Postgres, written
+throttled on success) → bundled static snapshot in `src/content/featured-tracks.ts`.
+`getCatalogStatus()` reflects the active provider and never lets upstream error strings
+reach the UI (errors are logged server-side only).
 
 ## The player (`player-context.tsx`)
 
-- One `<audio>` element, owned by `PlayerProvider` (wrapped in the root layout).
+- One `<audio>` element for Jamendo tracks, owned by `PlayerProvider` (wrapped in the root layout).
+- A `<YouTubeEngine>` (200×200 IFrame Player, `src/components/player/youtube-engine.tsx`) handles
+  YouTube-sourced tracks (no direct stream). Its state/time is reported back into the same shared
+  player state, so the UI doesn't care which engine is playing.
 - Queue state: `queue: Track[]`, `queueIndex`, `shuffle`, `repeat` (`off|all|one`).
 - `playTrack(track, queue?)` — plays a track with an optional queue context, so "next" works in any list.
 - **CORS probe**: before wiring the Web Audio analyser, we probe the stream origin once with a
   ranged request. If the CDN allows CORS, we connect `createMediaElementSource` → `AnalyserNode`
   and render a live waveform to a canvas. If not, playback continues with a decorative fallback.
+  (YouTube playback uses the decorative fallback — the IFrame engine has no analyser.)
+- **Media Session**: metadata + play/pause/next/previous handlers are registered so lock-screen
+  and notification controls work on mobile.
 - **History**: on `play`, the player POSTs to `/api/me/history` once per track id.
 
 ## API routes
@@ -74,6 +89,7 @@ and never lets upstream error strings reach the UI (errors are logged server-sid
 | `GET /api/v1/tracks`           | no   | Public read-only catalog API (rate-limited) |
 | `GET /api/v1/search`           | no   | Public read-only search API (rate-limited) |
 | `GET /api/health`              | no   | Uptime check + current catalog provider |
+| `GET /api/youtube/*`           | no   | YouTube resolve / genre-fill / quota status (rate-limited) |
 | `GET /api/tracks`              | no   | Search/browse catalog (rate-limited) |
 | `GET /api/radios`              | no   | Genre radios                       |
 | `GET|POST /api/me/favorites`   | yes  | List / add favorites               |

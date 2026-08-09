@@ -42,6 +42,8 @@ services:
       AUTH_EMAIL_FROM: "${AUTH_EMAIL_FROM:-noreply@phonq.app}"
       NEXT_PUBLIC_APP_URL: "${NEXT_PUBLIC_APP_URL:-http://localhost:3000}"
       JAMENDO_CLIENT_ID: "${JAMENDO_CLIENT_ID:-}"
+      YOUTUBE_API_KEY: "${YOUTUBE_API_KEY:-}"
+      YOUTUBE_DAILY_SEARCH_BUDGET: "${YOUTUBE_DAILY_SEARCH_BUDGET:-}"
     depends_on:
       db:
         condition: service_healthy
