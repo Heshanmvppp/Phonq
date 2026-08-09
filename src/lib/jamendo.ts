@@ -1,5 +1,7 @@
 import "server-only";
 
+import { classifyTrack, getSubgenre, PHONK_FAMILY_QUERY_TAGS } from "@/lib/phonk-genres";
+
 /**
  * Jamendo API client (https://developer.jamendo.com/v3.0)
  *
@@ -78,6 +80,13 @@ export interface Track {
   downloadsTotal: number;
   releaseDate: string | null;
   audioDownloadAllowed: boolean;
+  /**
+   * Phonk subgenre this track was classified into (e.g. "drift",
+   * "phonk-trap"), or null when it isn't part of the curated phonk catalog.
+   * Populated by `normalizeTrack`; the catalog layer relies on it to keep the
+   * platform phonk-only.
+   */
+  subgenre?: string | null;
 }
 
 export interface Radio {
@@ -198,6 +207,14 @@ export function normalizeTrack(t: JamendoTrack): Track {
     downloadsTotal: toNumber(t.stats?.downloads_total),
     releaseDate: t.releasedate ?? null,
     audioDownloadAllowed: Boolean(t.audiodownload_allowed),
+    subgenre: classifyTrack({
+      name: t.name,
+      artistName: t.artist_name,
+      genre: t.musicinfo?.genre ?? null,
+      bpm: typeof t.musicinfo?.bpm === "number" ? t.musicinfo.bpm : null,
+      tags: (t.tags ?? "").split(/\s+/).filter(Boolean),
+      vocalInstrumental: t.musicinfo?.vocalinstrumental ?? null,
+    })?.slug ?? null,
   };
 }
 
@@ -209,6 +226,8 @@ export interface TracksParams {
   limit?: number;
   offset?: number;
   ids?: string[];
+  /** Curate results to a single phonk subgenre (handled by the catalog layer). */
+  subgenre?: string;
 }
 
 export async function fetchTracks(params: TracksParams = {}): Promise<Track[]> {
@@ -256,17 +275,22 @@ export async function fetchRadios(): Promise<Radio[]> {
   }));
 }
 
-/** Popular phonk tracks this week — the default "Trending now" feed. */
+/**
+ * Popular phonk tracks this week — the default "Trending now" feed.
+ * The broad tag set surfaces subgenre tracks that Jamendo tags differently
+ * (drift, trap, drill, bass…); the catalog layer classifies + filters them.
+ */
 export async function fetchTrendingPhonk(limit = 24): Promise<Track[]> {
-  return fetchTracks({ tags: ["phonk"], boost: "popularity_week", limit });
+  return fetchTracks({ tags: PHONK_FAMILY_QUERY_TAGS, boost: "popularity_week", limit });
 }
 
-/** Freshly added tracks across the catalog. */
+/** Freshly added tracks across the phonk catalog. */
 export async function fetchFreshDrops(limit = 24): Promise<Track[]> {
-  return fetchTracks({ tags: ["phonk"], order: "dateadded_desc", limit });
+  return fetchTracks({ tags: PHONK_FAMILY_QUERY_TAGS, order: "dateadded_desc", limit });
 }
 
-export async function searchTracks(query: string, limit = 30): Promise<Track[]> {
+export async function searchTracks(query: string, limit = 30, subgenre?: string): Promise<Track[]> {
   if (!query.trim()) return [];
-  return fetchTracks({ search: query.trim(), tags: ["phonk"], limit });
+  const tags = subgenre ? (getSubgenre(subgenre)?.jamendoTags ?? PHONK_FAMILY_QUERY_TAGS) : PHONK_FAMILY_QUERY_TAGS;
+  return fetchTracks({ search: query.trim(), tags, limit });
 }

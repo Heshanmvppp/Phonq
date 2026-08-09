@@ -24,7 +24,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { Radio, Track, TracksParams } from "@/lib/jamendo";
 import * as jamendo from "@/lib/jamendo";
 import { prisma } from "@/lib/prisma";
-import { FEATURED_RADIOS } from "@/content/featured-radios";
+import { classifyTrack, getSubgenre, PHONK_FAMILY_QUERY_TAGS, PHONK_SUBGENRES } from "@/lib/phonk-genres";
 import { FEATURED_TRACKS } from "@/content/featured-tracks";
 import type { FeaturedTrack } from "@/content/featured-types";
 
@@ -267,6 +267,14 @@ function dbRowToTrack(row: {
     downloadsTotal: row.downloadsTotal,
     releaseDate: row.releaseDate,
     audioDownloadAllowed: row.audioDownloadAllowed,
+    subgenre:
+      classifyTrack({
+        name: row.name,
+        artistName: row.artistName,
+        genre: row.genre,
+        bpm: row.bpm,
+        tags: (row.tags ?? "").split(/\s+/).filter(Boolean),
+      })?.slug ?? null,
   };
 }
 
@@ -295,16 +303,25 @@ function featuredToTrack(t: FeaturedTrack): Track {
     downloadsTotal: t.downloadsTotal,
     releaseDate: t.releaseDate,
     audioDownloadAllowed: t.audioDownloadAllowed,
+    subgenre:
+      classifyTrack({
+        name: t.name,
+        artistName: t.artistName,
+        genre: t.genre,
+        bpm: t.bpm,
+        tags: t.tags,
+        vocalInstrumental: t.vocalInstrumental,
+      })?.slug ?? null,
   };
 }
 
 const staticTracks = FEATURED_TRACKS.map(featuredToTrack);
-const staticRadios: Radio[] = FEATURED_RADIOS.map((r) => ({
-  id: r.id,
-  name: r.name,
-  displayName: r.displayName,
-  image: r.image,
-  type: "phonk",
+/** Fallback radios are the curated phonk subgenres themselves. */
+const staticRadios: Radio[] = PHONK_SUBGENRES.map((subgenre) => ({
+  id: `phonk-radio-${subgenre.slug}`,
+  name: subgenre.slug,
+  displayName: subgenre.name,
+  image: "",
 }));
 
 interface QueryOptions {
@@ -314,6 +331,23 @@ interface QueryOptions {
   order?: string;
   limit?: number;
   offset?: number;
+  subgenre?: string;
+  phonkOnly?: boolean;
+}
+
+/**
+ * Keep only tracks that belong to the curated phonk catalog — every surfaced
+ * track must classify into a phonk subgenre (and optionally a specific one).
+ * Tracks loaded by id (favorites, playlists, history) skip this so user
+ * libraries never break.
+ */
+function curatedTracks<T extends Track>(tracks: T[], opts: { subgenre?: string }): T[] {
+  return tracks.filter((track) => {
+    const slug = track.subgenre ?? classifyTrack(track)?.slug ?? null;
+    if (slug == null) return false;
+    if (opts.subgenre && slug !== opts.subgenre) return false;
+    return true;
+  });
 }
 
 async function queryDbTracks(opts: QueryOptions): Promise<Track[] | null> {
@@ -332,6 +366,24 @@ async function queryDbTracks(opts: QueryOptions): Promise<Track[] | null> {
       where.AND = opts.tags.map((tag) => ({ tags: { contains: tag, mode: "insensitive" } }));
     }
 
+    // Phonk-only curation: narrow to tracks tagged with phonk-family (or a
+    // specific subgenre's) keywords, then filter the rows by classification.
+    const and: Prisma.CachedTrackWhereInput[] = [];
+    if (opts.phonkOnly || opts.subgenre) {
+      const keywords = opts.subgenre
+        ? (getSubgenre(opts.subgenre)?.keywords ?? []).slice(0, 10)
+        : PHONK_FAMILY_QUERY_TAGS.slice(0, 12);
+      and.push({
+        OR: keywords.map((keyword) => ({
+          tags: { contains: keyword, mode: "insensitive" as const },
+        })),
+      });
+    }
+    if (and.length > 0) {
+      const existing = Array.isArray(where.AND) ? (where.AND as Prisma.CachedTrackWhereInput[]) : [];
+      where.AND = [...existing, ...and];
+    }
+
     const orderBy =
       opts.order === "dateadded_desc"
         ? { cachedAt: "desc" as const }
@@ -343,7 +395,8 @@ async function queryDbTracks(opts: QueryOptions): Promise<Track[] | null> {
       take: opts.limit ?? 24,
       skip: opts.offset ?? 0,
     });
-    return rows.map(dbRowToTrack);
+    const tracks = rows.map(dbRowToTrack);
+    return opts.subgenre || opts.phonkOnly ? curatedTracks(tracks, { subgenre: opts.subgenre }) : tracks;
   } catch {
     return null;
   }
@@ -365,6 +418,11 @@ function queryStaticTracks(opts: QueryOptions): Track[] {
   } else if (opts.tags && opts.tags.length > 0) {
     list = list.filter((t) => opts.tags!.every((tag) => t.tags.some((x) => x.toLowerCase().includes(tag.toLowerCase()))));
   }
+  if (opts.subgenre) {
+    list = list.filter((t) => t.subgenre === opts.subgenre);
+  } else if (opts.phonkOnly && !(opts.ids && opts.ids.length > 0)) {
+    list = list.filter((t) => t.subgenre != null);
+  }
   if (opts.order !== "dateadded_desc") {
     list = [...list].sort((a, b) => b.popularityWeek - a.popularityWeek);
   }
@@ -378,6 +436,7 @@ function queryStaticTracks(opts: QueryOptions): Track[] {
 /* ------------------------------------------------------------------ */
 
 export async function fetchTracks(params: TracksParams = {}): Promise<Track[]> {
+  const byId = Boolean(params.ids && params.ids.length > 0);
   const opts: QueryOptions = {
     ids: params.ids,
     search: params.search,
@@ -385,13 +444,36 @@ export async function fetchTracks(params: TracksParams = {}): Promise<Track[]> {
     order: params.order,
     limit: params.limit ?? 24,
     offset: params.offset,
+    subgenre: params.subgenre,
+    phonkOnly: !byId,
   };
 
   try {
-    const tracks = await jamendo.fetchTracks(params);
+    if (byId) {
+      const tracks = await jamendo.fetchTracks({ ids: opts.ids, limit: opts.limit });
+      await cacheTracks(tracks);
+      await writeSuccessStatus();
+      return tracks;
+    }
+    // Over-fetch from the top so curation (classification) can fill the
+    // requested page; the offset window is applied locally after curation so
+    // pages stay aligned with the same ranked, curated list.
+    const start = opts.offset ?? 0;
+    const pageSize = opts.limit ?? 24;
+    const scaledLimit = Math.min((start + pageSize) * 5, 100);
+    const tags = opts.subgenre
+      ? (getSubgenre(opts.subgenre)?.jamendoTags ?? PHONK_FAMILY_QUERY_TAGS)
+      : (params.tags && params.tags.length > 0 ? params.tags : PHONK_FAMILY_QUERY_TAGS);
+    const tracks = await jamendo.fetchTracks({
+      search: opts.search,
+      tags,
+      boost: params.boost,
+      order: params.order,
+      limit: scaledLimit,
+    });
     await cacheTracks(tracks);
     await writeSuccessStatus();
-    return tracks;
+    return curatedTracks(tracks, { subgenre: opts.subgenre }).slice(start, start + pageSize);
   } catch (err) {
     await writeFailureStatus(err);
     const cached = await queryDbTracks(opts);
@@ -416,17 +498,54 @@ export async function fetchTracksByIds(ids: string[]): Promise<Track[]> {
   return tracks;
 }
 
+/** Phonk-distinctive words used to recognize phonk radios (unlike
+ * `PHONK_FAMILY_QUERY_TAGS`, this deliberately excludes broad words such as
+ * "metal", "funk", "wave" or "bass" that also name unrelated radios). */
+const PHONK_RADIO_WORDS = new Set([
+  "phonk",
+  "drift",
+  "memphis",
+  "cowbell",
+  "drill",
+  "trap",
+  "brazilian",
+  "baile",
+  "mandelao",
+  "g-funk",
+  "phonkwave",
+  "hyperphonk",
+  "hyperpop",
+  "plugg",
+  "jungle",
+  "dnb",
+  "breakbeat",
+]);
+
 export async function fetchRadios(): Promise<Radio[]> {
   try {
     const radios = await jamendo.fetchRadios();
     await writeSuccessStatus(radios);
-    return radios;
+    // Keep the platform phonk-only: only surface radios that belong to the
+    // curated phonk family. Fall back to the subgenre radios when none do.
+    const phonkRadios = radios.filter((radio) =>
+      [radio.displayName, radio.name, "type" in radio ? String((radio as Radio & { type?: string }).type) : ""]
+        .join(" ")
+        .toLowerCase()
+        .split(/\s+/)
+        .some((word) => PHONK_RADIO_WORDS.has(word) || word.startsWith("phonk")),
+    );
+    return phonkRadios.length > 0 ? phonkRadios : staticRadios;
   } catch (err) {
     await writeFailureStatus(err);
     try {
       const row = await prisma.catalogStatus.findUnique({ where: { id: 1 } });
       const cached = row?.radios as unknown as Radio[] | undefined;
-      if (cached && Array.isArray(cached) && cached.length > 0) return cached;
+      if (cached && Array.isArray(cached) && cached.length > 0) {
+        const cachedPhonk = cached.filter((radio) =>
+          [radio.displayName, radio.name].join(" ").toLowerCase().includes("phonk"),
+        );
+        if (cachedPhonk.length > 0) return cachedPhonk;
+      }
     } catch {
       /* no database */
     }
@@ -436,43 +555,49 @@ export async function fetchRadios(): Promise<Radio[]> {
 
 export async function fetchTrendingPhonk(limit = 24): Promise<Track[]> {
   try {
-    const tracks = await jamendo.fetchTrendingPhonk(limit);
+    const tracks = await jamendo.fetchTrendingPhonk(Math.min(limit * 4, 100));
     await cacheTracks(tracks);
     await writeSuccessStatus();
-    return tracks;
+    return curatedTracks(tracks, {}).slice(0, limit);
   } catch (err) {
     await writeFailureStatus(err);
-    const cached = await queryDbTracks({ limit, order: "popularity_week_desc" });
+    const cached = await queryDbTracks({ limit, phonkOnly: true });
     if (cached && cached.length > 0) return cached;
-    return queryStaticTracks({ limit });
+    return queryStaticTracks({ limit, phonkOnly: true });
   }
 }
 
 export async function fetchFreshDrops(limit = 24): Promise<Track[]> {
   try {
-    const tracks = await jamendo.fetchFreshDrops(limit);
+    const tracks = await jamendo.fetchFreshDrops(Math.min(limit * 4, 100));
     await cacheTracks(tracks);
     await writeSuccessStatus();
-    return tracks;
+    return curatedTracks(tracks, {}).slice(0, limit);
   } catch (err) {
     await writeFailureStatus(err);
-    const cached = await queryDbTracks({ limit, order: "dateadded_desc" });
+    const cached = await queryDbTracks({ limit, order: "dateadded_desc", phonkOnly: true });
     if (cached && cached.length > 0) return cached;
-    return queryStaticTracks({ limit, order: "dateadded_desc" });
+    return queryStaticTracks({ limit, order: "dateadded_desc", phonkOnly: true });
   }
 }
 
-export async function searchTracks(query: string, limit = 30): Promise<Track[]> {
+export async function searchTracks(query: string, limit = 30, subgenre?: string): Promise<Track[]> {
   if (!query.trim()) return [];
   try {
-    const tracks = await jamendo.searchTracks(query, limit);
+    const tracks = await jamendo.searchTracks(query, Math.min(limit * 4, 100), subgenre);
     await cacheTracks(tracks);
     await writeSuccessStatus();
-    return tracks;
+    return curatedTracks(tracks, { subgenre }).slice(0, limit);
   } catch (err) {
     await writeFailureStatus(err);
-    const cached = await queryDbTracks({ search: query.trim(), limit });
+    const cached = await queryDbTracks({ search: query.trim(), limit, subgenre, phonkOnly: true });
     if (cached && cached.length > 0) return cached;
-    return queryStaticTracks({ search: query.trim(), limit });
+    return queryStaticTracks({ search: query.trim(), limit, subgenre, phonkOnly: true });
   }
+}
+
+/** Tracks for a single phonk subgenre page. Returns [] for an unknown slug. */
+export async function fetchSubgenreTracks(slug: string, limit = 24): Promise<Track[]> {
+  if (!getSubgenre(slug)) return [];
+  return fetchTracks({ subgenre: slug, limit, boost: "popularity_week" });
 }

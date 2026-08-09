@@ -19,6 +19,11 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: "https",
+        hostname: "upcdn.io",
+        search: "**",
+      },
+      {
+        protocol: "https",
         hostname: "images.jamendo.com",
         search: "**",
       },

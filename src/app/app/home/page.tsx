@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 
+import Link from "next/link";
+
 import { fetchFreshDrops, fetchRadios, fetchTrendingPhonk, fetchTracksByIds } from "@/lib/catalog";
+import { PHONK_SUBGENRES } from "@/lib/phonk-genres";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import type { Track } from "@/lib/jamendo";
@@ -142,6 +145,32 @@ export default async function AppHomePage() {
           </div>
         </section>
       )}
+
+      <section>
+        <SectionHeading
+          align="left"
+          eyebrow="Explore"
+          title="Browse by subgenre"
+          description="Every track on Phonq is classified into one of these phonk subgenres."
+        />
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {PHONK_SUBGENRES.map((subgenre) => {
+            const Icon = subgenre.icon;
+            return (
+              <Link
+                key={subgenre.slug}
+                href={`/app/genres/${subgenre.slug}`}
+                className="flex items-center gap-3 rounded-xl border border-border bg-card p-3.5 transition-colors hover:border-primary/50 hover:bg-muted/30"
+              >
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Icon className="size-4" aria-hidden="true" />
+                </span>
+                <span className="truncate text-sm font-medium">{subgenre.name}</span>
+              </Link>
+            );
+          })}
+        </div>
+      </section>
 
       <section>
         <SectionHeading align="left" eyebrow="Radios" title="Tune in" description="Genre radios curated by the Jamendo editorial team." />

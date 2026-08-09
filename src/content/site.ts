@@ -25,6 +25,7 @@ export const marketingNav: NavGroup[] = [
     label: "Product",
     items: [
       { href: "/product/features", label: "Features", description: "Everything Phonq has to offer" },
+      { href: "/product/genres", label: "Genres", description: "A guide to every phonk subgenre" },
       { href: "/product/pricing", label: "Pricing", description: "Free now, free always" },
       { href: "/product/changelog", label: "Changelog", description: "What's new in Phonq" },
       { href: "/product/roadmap", label: "Roadmap", description: "What we're building next" },
