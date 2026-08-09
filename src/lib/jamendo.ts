@@ -94,6 +94,9 @@ export interface Radio {
   name: string;
   displayName: string;
   image: string;
+  /** Phonk subgenre slug when this radio maps to one of the curated subgenres
+   * (set on the fallback radios) — lets clients queue tracks for that sound. */
+  subgenre?: string;
 }
 
 export const JAMENDO_BASE_URL = "https://api.jamendo.com/v3.0";

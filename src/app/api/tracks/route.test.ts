@@ -53,7 +53,21 @@ describe("GET /api/tracks", () => {
     mocks.searchTracks.mockResolvedValue([track]);
     const res = await GET(new Request("http://localhost/api/tracks?search=drift&limit=5"));
     expect(res.status).toBe(200);
-    expect(mocks.searchTracks).toHaveBeenCalledWith("drift", 5);
+    expect(mocks.searchTracks).toHaveBeenCalledWith("drift", 5, undefined);
+  });
+
+  it("passes a subgenre to searchTracks", async () => {
+    mocks.searchTracks.mockResolvedValue([track]);
+    await GET(new Request("http://localhost/api/tracks?search=drift&subgenre=drift&limit=5"));
+    expect(mocks.searchTracks).toHaveBeenCalledWith("drift", 5, "drift");
+  });
+
+  it("passes a subgenre to fetchTracks for browse requests", async () => {
+    mocks.fetchTracks.mockResolvedValue([track]);
+    await GET(new Request("http://localhost/api/tracks?subgenre=rare-phonk&limit=5"));
+    expect(mocks.fetchTracks).toHaveBeenCalledWith(
+      expect.objectContaining({ subgenre: "rare-phonk" }),
+    );
   });
 
   it("returns a generic, safe message instead of a raw upstream error", async () => {

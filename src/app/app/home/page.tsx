@@ -16,7 +16,7 @@ import { buildAffinity, rankForYou } from "@/lib/recommendations";
 
 import { TrackStrip } from "@/components/track/track-strip";
 import { SectionHeading } from "@/components/marketing/section-heading";
-import { Card } from "@/components/ui/card";
+import { RadioCard } from "@/components/radio/radio-card";
 
 export const metadata: Metadata = {
   title: "Home",
@@ -205,12 +205,7 @@ export default async function AppHomePage() {
         <SectionHeading align="left" eyebrow="Radios" title="Tune in" description="Genre radios curated by the Jamendo editorial team." />
         <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           {radios.slice(0, 10).map((radio) => (
-            <Card key={radio.id} className="flex flex-col items-center gap-3 p-5 text-center">
-              <span className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-                {radio.displayName.slice(0, 1).toUpperCase()}
-              </span>
-              <p className="truncate text-sm font-medium">{radio.displayName}</p>
-            </Card>
+            <RadioCard key={radio.id} radio={radio} />
           ))}
         </div>
       </section>

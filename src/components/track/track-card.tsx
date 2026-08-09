@@ -9,6 +9,7 @@ import { Download, Music2, Pause, Play } from "lucide-react";
 import { usePlayer } from "@/components/player/player-context";
 import { AddToPlaylistButton } from "@/components/track/add-to-playlist";
 import { LikeButton } from "@/components/track/like-button";
+import { ShareButton } from "@/components/track/share-button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatDuration } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
@@ -39,6 +40,10 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
       playTrack(track);
     }
   }
+
+  const tileClass =
+    "flex h-9 flex-1 items-center justify-center rounded-md border border-border/60 transition-colors";
+  const actionTileClass = `${tileClass} text-muted-foreground hover:bg-muted hover:text-foreground`;
 
   return (
     <div
@@ -76,34 +81,6 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
             </span>
           </span>
         )}
-
-        <div className="absolute bottom-2 right-2 flex translate-y-2 items-center gap-1.5 opacity-0 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100">
-          {track.audioDownloadAllowed && track.downloadUrl && (
-            <a
-              href={track.downloadUrl}
-              target="_blank"
-              rel="noreferrer"
-              download
-              onClick={(e) => e.stopPropagation()}
-              className="flex size-10 items-center justify-center rounded-full bg-black/70 text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/90"
-              aria-label={`Download ${track.name}`}
-              title="Download (CC license)"
-            >
-              <Download className="size-4" />
-            </a>
-          )}
-          <button
-            type="button"
-            onClick={handlePlay}
-            className={cn(
-              "flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 transition-transform hover:scale-105 active:scale-95",
-              compact ? "size-10" : "size-11",
-            )}
-            aria-label={isNowPlaying ? "Pause" : "Play"}
-          >
-            {isNowPlaying ? <Pause className="size-5" /> : <Play className="ml-0.5 size-5" />}
-          </button>
-        </div>
       </div>
 
       <div className={cn("mt-3 flex items-start justify-between gap-2", compact && "mt-2")}>
@@ -125,10 +102,38 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
             </div>
           )}
         </div>
-        <div className="flex shrink-0 flex-col items-center gap-0.5">
-          <LikeButton trackId={track.id} initialLiked={liked} className="-mr-1 -mt-1" />
-          <AddToPlaylistButton trackId={track.id} className="-mr-1" />
-        </div>
+        <AddToPlaylistButton trackId={track.id} className="-mr-1" />
+      </div>
+
+      <div className="mt-2.5 flex items-center gap-1.5">
+        {track.audioDownloadAllowed && track.downloadUrl && (
+          <a
+            href={track.downloadUrl}
+            target="_blank"
+            rel="noreferrer"
+            download
+            onClick={(e) => e.stopPropagation()}
+            className={actionTileClass}
+            aria-label={`Download ${track.name}`}
+            title="Download (CC license)"
+          >
+            <Download className="size-4" />
+          </a>
+        )}
+        <LikeButton trackId={track.id} initialLiked={liked} className={tileClass} />
+        <ShareButton
+          url={`/track/${track.id}`}
+          title={`${track.name} — ${track.artistName}`}
+          className={actionTileClass}
+        />
+        <button
+          type="button"
+          onClick={handlePlay}
+          className="flex h-9 flex-1 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-sm shadow-primary/20 transition-colors hover:bg-primary/90 active:scale-95"
+          aria-label={isNowPlaying ? "Pause" : "Play"}
+        >
+          {isNowPlaying ? <Pause className="size-4" /> : <Play className="ml-0.5 size-4" />}
+        </button>
       </div>
     </div>
   );

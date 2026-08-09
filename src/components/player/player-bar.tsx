@@ -76,12 +76,19 @@ export function PlayerBar() {
   } = usePlayer();
 
   const iconClass = "text-muted-foreground transition-colors hover:text-foreground";
+  const [currentTrackId, setCurrentTrackId] = React.useState(currentTrack?.id ?? null);
   const [scrubValue, setScrubValue] = React.useState(currentTime);
   const [isScrubbing, setIsScrubbing] = React.useState(false);
   const [releasePulse, setReleasePulse] = React.useState(false);
   const [activeTrack, setActiveTrack] = React.useState<Track | null>(currentTrack ?? null);
   const [incomingTrack, setIncomingTrack] = React.useState<Track | null>(null);
   const [isCrossfading, setIsCrossfading] = React.useState(false);
+
+  if (currentTrack?.id !== currentTrackId) {
+    setCurrentTrackId(currentTrack?.id ?? null);
+    setScrubValue(0);
+    setIsScrubbing(false);
+  }
 
   const volumeRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -126,7 +133,7 @@ export function PlayerBar() {
   if (!currentTrack) return null;
 
   return (
-    <div key={currentTrack.id} className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/90 backdrop-blur-lg transition-all duration-300 animate-slide-up pb-[max(env(safe-area-inset-bottom),0.375rem)]">
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/90 backdrop-blur-lg transition-all duration-300 animate-slide-up pb-[max(env(safe-area-inset-bottom),0.375rem)]">
       <div className="px-3 pt-1.5 sm:px-6">
         <Waveform className="h-8 sm:h-9 rounded-lg opacity-70" />
       </div>

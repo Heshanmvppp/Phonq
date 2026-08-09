@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
 
@@ -22,10 +23,15 @@ interface DropdownMenuProps {
   onOpenChange?: (open: boolean) => void;
 }
 
+const MENU_GAP = 8;
+const EDGE_MARGIN = 8;
+
 export function DropdownMenu({ trigger, children, align = "end", className, onOpenChange }: DropdownMenuProps) {
   const [open, setOpen] = React.useState(false);
+  const [position, setPosition] = React.useState<{ top: number; left: number } | null>(null);
   const rootRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const menuRef = React.useRef<HTMLDivElement>(null);
   const itemRefs = React.useRef<HTMLButtonElement[]>([]);
   const onOpenChangeRef = React.useRef(onOpenChange);
 
@@ -33,37 +39,66 @@ export function DropdownMenu({ trigger, children, align = "end", className, onOp
     onOpenChangeRef.current = onOpenChange;
   }, [onOpenChange]);
 
-  function setOpenState(next: boolean) {
+  const setOpenState = React.useCallback((next: boolean) => {
     setOpen(next);
     onOpenChangeRef.current?.(next);
-  }
+  }, []);
 
-  function toggle() {
-    setOpenState(!open);
-  }
+  const toggle = React.useCallback(() => setOpenState(!open), [open, setOpenState]);
+
+  const place = React.useCallback(() => {
+    const triggerEl = triggerRef.current;
+    if (!triggerEl) return;
+    const rect = triggerEl.getBoundingClientRect();
+    const menuEl = menuRef.current;
+    const menuWidth = menuEl?.offsetWidth ?? 0;
+    const menuHeight = menuEl?.offsetHeight ?? 0;
+    let left = align === "end" ? rect.right - menuWidth : rect.left;
+    left = Math.max(EDGE_MARGIN, Math.min(left, window.innerWidth - menuWidth - EDGE_MARGIN));
+    let top = rect.bottom + MENU_GAP;
+    if (top + menuHeight > window.innerHeight - EDGE_MARGIN && rect.top - MENU_GAP - menuHeight >= EDGE_MARGIN) {
+      top = rect.top - MENU_GAP - menuHeight;
+    } else {
+      top = Math.min(top, Math.max(EDGE_MARGIN, window.innerHeight - menuHeight - EDGE_MARGIN));
+    }
+    setPosition({ top, left });
+  }, [align]);
+
+  React.useLayoutEffect(() => {
+    if (!open) return;
+    place();
+    const frame = requestAnimationFrame(() => itemRefs.current[0]?.focus());
+    const menuEl = menuRef.current;
+    const observer = menuEl ? new ResizeObserver(() => place()) : null;
+    if (menuEl && observer) observer.observe(menuEl);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, place]);
 
   React.useEffect(() => {
     if (!open) return;
 
-    const onPointerDown = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpenState(false);
-      }
-    };
+    const triggerEl = triggerRef.current;
 
-    const trigger = triggerRef.current;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpenState(false);
+    };
 
     document.addEventListener("mousedown", onPointerDown);
-    const frame = requestAnimationFrame(() => {
-      itemRefs.current[0]?.focus();
-    });
-
     return () => {
-      cancelAnimationFrame(frame);
       document.removeEventListener("mousedown", onPointerDown);
-      trigger?.focus();
+      triggerEl?.focus();
     };
-  }, [open]);
+  }, [open, setOpenState]);
 
   const registerItem = React.useCallback((element: HTMLButtonElement) => {
     itemRefs.current.push(element);
@@ -86,7 +121,7 @@ export function DropdownMenu({ trigger, children, align = "end", className, onOp
     items[index < 0 ? items.length - 1 : index]?.focus();
   }, []);
 
-  const close = React.useCallback(() => setOpenState(false), []);
+  const close = React.useCallback(() => setOpenState(false), [setOpenState]);
 
   const contextValue = React.useMemo<MenuContextValue>(
     () => ({ registerItem, unregisterItem, moveFocus, moveFocusTo, close }),
@@ -116,19 +151,27 @@ export function DropdownMenu({ trigger, children, align = "end", className, onOp
       >
         {trigger}
       </button>
-      {open && (
-        <MenuContext.Provider value={contextValue}>
-          <div
-            className={cn(
-              "absolute z-50 mt-2 min-w-48 overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl animate-fade-up",
-              align === "end" ? "right-0" : "left-0",
-              className,
-            )}
-          >
-            {children}
-          </div>
-        </MenuContext.Provider>
-      )}
+      {open && typeof document !== "undefined"
+        ? createPortal(
+            <MenuContext.Provider value={contextValue}>
+              <div
+                ref={menuRef}
+                className={cn(
+                  "fixed z-[100] min-w-48 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl animate-fade-up",
+                  className,
+                )}
+                style={{
+                  top: position?.top ?? 0,
+                  left: position?.left ?? 0,
+                  visibility: position ? "visible" : "hidden",
+                }}
+              >
+                {children}
+              </div>
+            </MenuContext.Provider>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

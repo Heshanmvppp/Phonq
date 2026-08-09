@@ -86,6 +86,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const shuffleRef = React.useRef(shuffle);
   const repeatRef = React.useRef(repeat);
   const currentTrackRef = React.useRef<Track | null>(null);
+  const preloadAudioRef = React.useRef<HTMLAudioElement | null>(null);
+  const preloadedNextRef = React.useRef<{ index: number; url: string } | null>(null);
 
   React.useEffect(() => {
     queueRef.current = queue;
@@ -195,8 +197,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const len = q.length;
     if (len === 0) return;
     let idx = queueIndexRef.current;
+    const preloaded = preloadedNextRef.current;
     if (shuffleRef.current) {
-      idx = shuffledIndex(idx, len);
+      if (
+        preloaded &&
+        preloaded.index >= 0 &&
+        preloaded.index < len &&
+        q[preloaded.index]?.audioUrl === preloaded.url
+      ) {
+        idx = preloaded.index;
+      } else {
+        idx = shuffledIndex(idx, len);
+      }
     } else if (idx < len - 1) {
       idx += 1;
     } else if (repeatRef.current === "all") {
@@ -207,6 +219,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       setIsPlaying(false);
       return;
     }
+    preloadedNextRef.current = null;
     setQueueIndex(idx);
   }, []);
 
@@ -336,6 +349,44 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (allowed) void ensureVisualizer();
     });
   }, [currentTrack, probeCors, ensureVisualizer]);
+
+  /** Warm the connection/cache for the upcoming track so auto-advance starts fast. */
+  React.useEffect(() => {
+    const track = currentTrack;
+    if (!track) return;
+    const q = queueRef.current;
+    const len = q.length;
+    const idx = queueIndexRef.current;
+    let nextIndex = -1;
+    if (repeatRef.current === "one") {
+      nextIndex = -1;
+    } else if (shuffleRef.current) {
+      if (len > 0) nextIndex = shuffledIndex(idx, len);
+    } else if (idx < len - 1) {
+      nextIndex = idx + 1;
+    } else if (repeatRef.current === "all") {
+      nextIndex = 0;
+    }
+    if (nextIndex < 0 || nextIndex >= len) return;
+    const nextTrack = q[nextIndex];
+    if (!nextTrack || nextTrack.id === track.id) return;
+    const url = nextTrack.audioUrl;
+    preloadedNextRef.current = { index: nextIndex, url };
+    void probeCors(url).then((allowed) => {
+      if (preloadedNextRef.current?.url !== url) return;
+      const previous = preloadAudioRef.current;
+      if (previous) {
+        previous.removeAttribute("src");
+        previous.load();
+      }
+      const el = new Audio();
+      preloadAudioRef.current = el;
+      el.preload = "auto";
+      if (allowed) el.crossOrigin = "anonymous";
+      el.src = url;
+      el.load();
+    });
+  }, [currentTrack, probeCors]);
 
   /** Sync volume. */
   React.useEffect(() => {

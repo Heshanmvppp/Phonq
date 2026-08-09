@@ -322,6 +322,7 @@ const staticRadios: Radio[] = PHONK_SUBGENRES.map((subgenre) => ({
   name: subgenre.slug,
   displayName: subgenre.name,
   image: "",
+  subgenre: subgenre.slug,
 }));
 
 interface QueryOptions {

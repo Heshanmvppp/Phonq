@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 
 import { ListMusic, Play, Trash2, X } from "lucide-react";
 
@@ -24,7 +25,7 @@ export function QueuePanel() {
 
   if (!queueOpen) return null;
 
-  return (
+  const panel = (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setQueueOpen(false)} aria-hidden="true" />
       <aside className="relative flex h-full w-full max-w-md flex-col border-l border-border bg-popover shadow-2xl animate-fade-up">
@@ -134,4 +135,6 @@ export function QueuePanel() {
       </aside>
     </div>
   );
+
+  return typeof document === "undefined" ? null : createPortal(panel, document.body);
 }

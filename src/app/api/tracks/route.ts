@@ -12,6 +12,7 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const search = url.searchParams.get("search")?.trim();
+  const subgenre = url.searchParams.get("subgenre")?.trim() ?? undefined;
   const tags = url.searchParams.get("tags");
   const boost = url.searchParams.get("boost") ?? undefined;
   const order = url.searchParams.get("order") ?? undefined;
@@ -20,9 +21,10 @@ export async function GET(request: Request) {
 
   try {
     const tracks = search
-      ? await searchTracks(search, limit)
+      ? await searchTracks(search, limit, subgenre)
       : await fetchTracks({
           tags: tags ? tags.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+          subgenre,
           boost,
           order,
           limit,
