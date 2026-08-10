@@ -1,6 +1,6 @@
 import { fetchYouTubeFill, getYouTubeQuota, resolveYouTubeForTrack } from "@/lib/catalog";
 
-import { ok } from "@/lib/api";
+import { notFound, ok } from "@/lib/api";
 import { checkRateLimit, ipKey } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -8,26 +8,28 @@ export const dynamic = "force-dynamic";
 /**
  * YouTube hybrid-catalog helpers.
  *
- * GET /api/youtube/resolve?name=…&artist=…           → resolve a song to a YouTube video
- * GET /api/youtube/fill?subgenre=brazilian&limit=12   → cached YouTube tracks for a genre gap
- * GET /api/youtube/quota                              → daily search budget status
+ * GET /api/youtube/quota                                  → daily search budget status
+ * GET /api/youtube/fill?subgenre=…&limit=…                → cached YouTube tracks for a genre gap
+ * GET /api/youtube/resolve?name=…&artist=…                → resolve a song to a YouTube video
  *
  * All routes are read-only and rate-limited. They degrade gracefully (empty
  * results / zeros) when the YouTube API key is missing or the budget is spent.
+ * (A single route.ts only matches its exact path, so each action is served by
+ * the [action] segment below rather than a shared base route.)
  */
-export async function GET(request: Request) {
+export async function GET(request: Request, { params }: { params: Promise<{ action: string }> }) {
   if (!checkRateLimit(ipKey(request), 60, 60_000)) {
     return Response.json({ error: "Too many requests, slow down" }, { status: 429 });
   }
 
   const url = new URL(request.url);
-  const path = url.pathname.split("/").pop();
+  const { action } = await params;
 
-  if (path === "quota") {
+  if (action === "quota") {
     return ok({ quota: await getYouTubeQuota() });
   }
 
-  if (path === "fill") {
+  if (action === "fill") {
     const subgenre = url.searchParams.get("subgenre")?.trim();
     const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 12, 1), 50);
     if (!subgenre) return Response.json({ error: "Missing subgenre" }, { status: 400 });
@@ -35,7 +37,7 @@ export async function GET(request: Request) {
     return ok({ tracks, count: tracks.length, subgenre });
   }
 
-  if (path === "resolve") {
+  if (action === "resolve") {
     const name = url.searchParams.get("name")?.trim();
     const artist = url.searchParams.get("artist")?.trim() ?? "";
     if (!name) return Response.json({ error: "Missing name" }, { status: 400 });
@@ -43,5 +45,5 @@ export async function GET(request: Request) {
     return ok({ track: track ?? null, resolved: track != null });
   }
 
-  return Response.json({ error: "Unknown endpoint" }, { status: 404 });
+  return notFound("Unknown endpoint");
 }

@@ -13,7 +13,7 @@ export function Footer() {
     <footer className="border-t border-border bg-muted/30">
       <div className="mx-auto max-w-screen-2xl px-4 py-12 sm:py-16 sm:px-6">
          <div className="flex flex-wrap gap-8 sm:gap-10">
-           <div className="w-64 flex-shrink-0">
+           <div className="w-64 flex-shrink-0 mr-auto">
              <Logo />
              <p className="mt-4 max-w-sm text-sm text-muted-foreground">
                Phonq is a free, open-source music streaming platform for the phonk community. Every

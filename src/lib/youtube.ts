@@ -550,6 +550,129 @@ export async function resolveSongVideo(
   return searchAndCache(songTitle, artistName, subgenre);
 }
 
+/* ------------------------------------------------------------------ */
+/* Runtime genre-gap fill (on-demand, budget-gated)                    */
+/* ------------------------------------------------------------------ */
+
+/** Per-process throttle so a burst of page renders doesn't re-search the
+ * same genre within a day, and the winners are persisted for free reads. */
+const genreFillAt: Map<string, number> = new Map();
+const GENRE_FILL_DEDUPE_MS = 24 * 60 * 60 * 1000;
+
+/** Opt out of live searches with `YOUTUBE_RUNTIME_FILL=0`; on by default. */
+function runtimeFillEnabled(): boolean {
+  const value = (process.env.YOUTUBE_RUNTIME_FILL ?? "1").toLowerCase();
+  return !["0", "false", "off", "no"].includes(value);
+}
+
+function markGenreFill(subgenre: string): boolean {
+  const now = Date.now();
+  const last = genreFillAt.get(subgenre) ?? 0;
+  if (now - last < GENRE_FILL_DEDUPE_MS) return false;
+  genreFillAt.set(subgenre, now);
+  return true;
+}
+
+/** Skip low-quality "lyrics" results (no audio of their own). */
+function isLyricResult(title: string | undefined, channelTitle: string | undefined): boolean {
+  return /lyric(s)?/i.test(`${title ?? ""} ${channelTitle ?? ""}`);
+}
+
+/** Rank candidates for a genre (not a specific song): prefer auto-generated
+ * Topic audio and official/VEVO uploads that carry a thumbnail. */
+function genreCandidateScore(item: SearchItem): number {
+  const title = item.snippet?.title ?? "";
+  const channel = item.snippet?.channelTitle ?? "";
+  let score = 0;
+  if (title) score += 2;
+  if (channel.endsWith("- topic")) score += 4;
+  if (channel.includes("vevo")) score += 2;
+  if (channel.includes("official")) score += 1;
+  if (item.snippet?.thumbnails?.medium?.url) score += 1;
+  return score;
+}
+
+/**
+ * Search YouTube live for a subgenre's tracks (e.g. "Brazilian Funk phonk")
+ * to top up a genre that Jamendo's CC catalog can't fill — no manual seeding
+ * required. This is the runtime twin of `seedFromPlaylist` +
+ * `fetchCachedSubgenreVideos`: each genre is searched at most once per day
+ * (per process), the spend is capped by the rolling daily search budget, and
+ * the winners are persisted so later page loads are free DB reads.
+ *
+ * Lyrics videos and non-embeddable/short/long items are dropped; the best
+ * candidates are returned as `YouTubeVideo`s tagged with the subgenre.
+ */
+export async function fetchGenreVideos(
+  subgenre: string,
+  queries: string[],
+  limit = 12,
+): Promise<YouTubeVideo[]> {
+  if (!process.env.YOUTUBE_API_KEY || !runtimeFillEnabled() || limit <= 0) return [];
+  if (queries.length === 0 || !markGenreFill(subgenre)) return [];
+
+  // Respect the rolling daily search budget before spending 100 units.
+  try {
+    const quota = await prisma.youTubeQuota.findUnique({ where: { date: today() } });
+    if ((quota?.searches ?? 0) >= dailySearchBudget()) {
+      console.warn(`[youtube] daily search budget (${dailySearchBudget()}) exhausted — skipping genre fill "${subgenre}"`);
+      return [];
+    }
+  } catch {
+    /* no database — the per-process throttle still guards bursts */
+  }
+
+  const found: YouTubeVideo[] = [];
+  const seenIds = new Set<string>();
+
+  for (const query of queries.slice(0, 3)) {
+    if (found.length >= limit) break;
+    const data = await ytGet<SearchResponse>("search", {
+      part: "snippet",
+      type: "video",
+      q: query,
+      maxResults: "25",
+      safeSearch: "none",
+      relevanceLanguage: "en",
+    });
+    if (data) await recordQuota(SEARCH_UNITS, 1);
+    if (!data?.items) continue;
+
+    const candidates = data.items
+      .filter((item) => {
+        if (!item.id?.videoId || seenIds.has(item.id.videoId)) return false;
+        const title = item.snippet?.title?.trim() ?? "";
+        if (!title) return false;
+        if (isLyricResult(title, item.snippet?.channelTitle)) return false;
+        return true;
+      })
+      .sort((a, b) => genreCandidateScore(b) - genreCandidateScore(a))
+      .slice(0, Math.max(limit * 2, 12));
+
+    const ids = candidates.map((item) => item.id!.videoId!);
+    const metas = await videosList(ids);
+    for (const meta of metas) {
+      if (!meta.embeddable) continue;
+      if (meta.duration < 45 || meta.duration > 900) continue;
+      if (seenIds.has(meta.videoId)) continue;
+      seenIds.add(meta.videoId);
+      const track: YouTubeVideo = {
+        ...meta,
+        // videos.list reports the raw channel title as artist; prefer a parsed
+        // "Artist" from the actual video title (handles "- Topic" channels).
+        artistName: parseTitle(meta.title, meta.channelTitle).artistName || meta.artistName,
+        subgenre,
+        source: "search",
+      };
+      found.push(track);
+      await upsertVideo(track);
+      if (found.length >= limit) break;
+    }
+  }
+
+  return found.slice(0, limit);
+}
+
 /**
  * Backfill a genre by paging an uploads/curated playlist with
  * `playlistItems.list` (1 unit per 50 items). Bulk-seeds the mapping table for

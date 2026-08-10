@@ -15,6 +15,9 @@ const mocks = vi.hoisted(() => ({
   },
   youtube: {
     fetchVideosByIds: vi.fn(),
+    fetchCachedSubgenreVideos: vi.fn().mockResolvedValue([]),
+    fetchGenreVideos: vi.fn().mockResolvedValue([]),
+    resolveSongVideo: vi.fn().mockResolvedValue(null),
   },
   prisma: {
     catalogStatus: {
@@ -53,7 +56,7 @@ vi.mock("@/lib/youtube", () => ({
 
 import * as jamendo from "@/lib/jamendo";
 import * as youtube from "@/lib/youtube";
-import { fetchTracksByIds, fetchTrack, fetchFreshDrops, fetchRadios, fetchTracks, fetchTrendingPhonk, getCatalogStatus, searchTracks } from "@/lib/catalog";
+import { fetchTracksByIds, fetchTrack, fetchFreshDrops, fetchRadios, fetchSubgenreTracks, fetchTracks, fetchTrendingPhonk, getCatalogStatus, searchTracks } from "@/lib/catalog";
 
 const liveTracks = [
   {
@@ -305,5 +308,63 @@ describe("YouTube id resolution", () => {
     mocks.youtube.fetchVideosByIds.mockResolvedValue([]);
     const track = await fetchTrack("yt:missing123");
     expect(track).toBeNull();
+  });
+});
+
+describe("subgenre genre-gap fill", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.prisma.catalogStatus.upsert.mockResolvedValue(undefined);
+    mocks.prisma.cachedTrack.findMany.mockResolvedValue([]);
+    mocks.youtube.fetchCachedSubgenreVideos.mockResolvedValue([]);
+    mocks.youtube.fetchGenreVideos.mockResolvedValue([]);
+  });
+
+  const ytVideo = {
+    videoId: "gW1",
+    title: "Brazilian Drift Banger",
+    artistName: "MC Drift",
+    duration: 210,
+    thumbnail: "https://i.ytimg.com/vi/gW1/mqdefault.jpg",
+    channelId: "c1",
+    channelTitle: "MC Drift - Topic",
+    embeddable: true,
+    subgenre: "brazilian",
+    source: "search",
+  };
+
+  it("returns Jamendo tracks directly when the genre is full", async () => {
+    vi.mocked(jamendo.fetchTracks).mockResolvedValue([{ ...liveTracks[0], name: "Drift Phonk" }]);
+    const tracks = await fetchSubgenreTracks("drift", 1);
+    expect(tracks.map((t) => t.id)).toEqual(["100"]);
+    expect(mocks.youtube.fetchGenreVideos).not.toHaveBeenCalled();
+  });
+
+  it("tops up a thin genre from the cached YouTube seed", async () => {
+    vi.mocked(jamendo.fetchTracks).mockResolvedValue([]);
+    mocks.youtube.fetchCachedSubgenreVideos.mockResolvedValue([ytVideo]);
+    const tracks = await fetchSubgenreTracks("brazilian", 12);
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0]).toMatchObject({ id: "yt:gW1", source: "youtube", subgenre: "brazilian" });
+    // Still short of the window, so the runtime filler is asked for the remainder.
+    expect(mocks.youtube.fetchGenreVideos).toHaveBeenCalledWith("brazilian", expect.any(Array), 11);
+  });
+
+  it("falls back to a live YouTube search when the cached seed is empty", async () => {
+    vi.mocked(jamendo.fetchTracks).mockResolvedValue([]);
+    mocks.youtube.fetchGenreVideos.mockResolvedValue([ytVideo]);
+    const tracks = await fetchSubgenreTracks("brazilian", 12);
+    expect(mocks.youtube.fetchGenreVideos).toHaveBeenCalledWith("brazilian", expect.any(Array), 12);
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0]).toMatchObject({ id: "yt:gW1", source: "youtube", videoId: "gW1" });
+  });
+
+  it("does not double-list the same video across cached and live fill", async () => {
+    const same = { ...ytVideo };
+    vi.mocked(jamendo.fetchTracks).mockResolvedValue([]);
+    mocks.youtube.fetchCachedSubgenreVideos.mockResolvedValue([same]);
+    mocks.youtube.fetchGenreVideos.mockResolvedValue([same]);
+    const tracks = await fetchSubgenreTracks("brazilian", 12);
+    expect(tracks).toHaveLength(1);
   });
 });

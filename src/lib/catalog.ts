@@ -427,6 +427,20 @@ export async function fetchYouTubeFill(subgenre: string, limit = 12): Promise<Tr
   return videos.map(youtubeToTrack).slice(0, limit);
 }
 
+/** Runtime genre-gap fill: search YouTube live (budget-gated, at most once per
+ * day per genre) when the cached seed is still short — so thin genres never
+ * render empty, without needing a manual `sync:youtube` run first. */
+export async function fetchYouTubeLiveFill(subgenre: string, limit = 12): Promise<Track[]> {
+  if (limit <= 0) return [];
+  const sp = getSubgenre(subgenre);
+  if (!sp) return [];
+  const queries = [`${sp.name} phonk`, sp.name, ...sp.keywords.slice(0, 2)]
+    .filter((q, i, arr) => q.trim() && arr.indexOf(q) === i)
+    .slice(0, 3);
+  const videos = await youtube.fetchGenreVideos(subgenre, queries, limit);
+  return videos.map(youtubeToTrack);
+}
+
 /** Daily YouTube search budget status, for the health/admin surface. */
 export async function getYouTubeQuota(): Promise<youtube.YouTubeQuotaStatus> {
   return youtube.getYouTubeQuotaStatus();
@@ -758,9 +772,26 @@ export async function fetchSubgenreTracks(slug: string, limit = 24): Promise<Tra
   const jamendoTracks = await fetchTracks({ subgenre: slug, limit, boost: "popularity_week" });
   // Genre-gap fill: when Jamendo's CC catalog is thin for this subgenre (e.g.
   // Brazilian funk), top up the page from the cached YouTube seed (free reads —
-  // the bulk of the genre was backfilled once with playlistItems.list). Keeps
-  // Jamendo primary (legal, direct audio) while YouTube covers the gaps.
+  // the bulk of the genre was backfilled once with playlistItems.list). When
+  // even the seed is empty, fall back to a budget-gated live YouTube search so
+  // thin genres never render empty. Keeps Jamendo primary (legal, direct
+  // audio) while YouTube covers the gaps.
   if (jamendoTracks.length >= limit) return jamendoTracks;
-  const fill = await fetchYouTubeFill(slug, limit - jamendoTracks.length);
-  return [...jamendoTracks, ...fill];
+  let tracks = dedupeTracks([...jamendoTracks, ...(await fetchYouTubeFill(slug, limit - jamendoTracks.length))]);
+  if (tracks.length < limit) {
+    tracks = dedupeTracks([...tracks, ...(await fetchYouTubeLiveFill(slug, limit - tracks.length))]);
+  }
+  return tracks.slice(0, limit);
+}
+
+/** Deduplicate tracks by id so cached seed and live-search fill never double-list. */
+function dedupeTracks<T extends Track>(tracks: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const track of tracks) {
+    if (seen.has(track.id)) continue;
+    seen.add(track.id);
+    out.push(track);
+  }
+  return out;
 }
