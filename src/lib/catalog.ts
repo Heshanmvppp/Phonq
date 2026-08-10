@@ -441,6 +441,16 @@ export async function fetchYouTubeLiveFill(subgenre: string, limit = 12): Promis
   return videos.map(youtubeToTrack);
 }
 
+/** Runtime search fill: when Jamendo can't match a user's query (e.g. "Brodyaga
+ * Funk" — popular Russian phonk with no CC release), surface YouTube search
+ * results for the exact query (budget-gated, at most once per day per query) so
+ * search never renders empty. */
+export async function fetchYouTubeQueryFill(query: string, limit = 12, subgenre?: string): Promise<Track[]> {
+  if (limit <= 0) return [];
+  const videos = await youtube.fetchQueryVideos(query, limit, subgenre);
+  return videos.map(youtubeToTrack);
+}
+
 /** Daily YouTube search budget status, for the health/admin surface. */
 export async function getYouTubeQuota(): Promise<youtube.YouTubeQuotaStatus> {
   return youtube.getYouTubeQuotaStatus();
@@ -757,7 +767,15 @@ export async function searchTracks(query: string, limit = 30, subgenre?: string)
       candidates.push(...curatedTracks(enriched2, { subgenre }));
     }
     await writeSuccessStatus();
-    return candidates.slice(0, limit);
+    const results = [...candidates];
+    // Search fill: when Jamendo's CC catalog comes back short or empty for a
+    // phonk query (YouTube/SoundCloud-native artists), top up with budget-gated
+    // live YouTube search results for the exact query so search never renders
+    // empty. Persisted on the run — later identical queries are free DB reads.
+    if (results.length < Math.min(limit, 6)) {
+      results.push(...(await fetchYouTubeQueryFill(query.trim(), limit - results.length, subgenre)));
+    }
+    return results.slice(0, limit);
   } catch (err) {
     await writeFailureStatus(err);
     const cached = await queryDbTracks({ search: query.trim(), limit, subgenre, phonkOnly: true });
