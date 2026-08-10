@@ -214,10 +214,10 @@ model YouTubeVideoMapping {
   @@map("youtube_video_mappings")
 }
 
-/// Rolling daily YouTube API quota ledger (units). Keeps search.list spending
-/// inside the free ~10k-units/day budget by refusing new searches once the
-/// daily search budget for the app is spent. videos.list / playlistItems.list
-/// are always allowed (they cost 1 unit each and the reads are cached).
+/// Rolling daily YouTube API quota ledger (units). Kept for backward-compatible
+/// status reporting; per-project, per-operation usage is now tracked in Redis
+/// by `youtube-pool.ts` so the 10-project quota pool is shared across
+/// instances. This row is still maintained as a durable, cross-instance roll-up.
 model YouTubeQuota {
   id        Int    @id @default(1)
   /// Calendar date (YYYY-MM-DD) the ledger covers.
@@ -226,6 +226,47 @@ model YouTubeQuota {
   searches  Int    @default(0)
 
   @@map("youtube_quota")
+}
+
+/// Lean YouTube metadata catalog. Lives in a dedicated Neon DB when
+/// `YOUTUBE_DATABASE_URL` is set (isolated blast radius from user data), else in
+/// the main app DB. One row per video (~1 KB), so 500MB ≈ 400-500k songs.
+/// Thumbnails are not stored — reconstructed client-side from the video id.
+model Song {
+  videoId      String    @id @map("video_id") @db.VarChar(11)
+  title        String    @db.Text
+  artist       String    @db.Text
+  channelId    String?   @map("channel_id") @db.VarChar(24)
+  channelTitle String?   @map("channel_title") @db.Text
+  durationSec  Int       @default(0) @map("duration_sec") @db.SmallInt
+  /// Phonk subgenre slug when seeded for a genre gap, else null (general pool).
+  genreTag     String?   @map("genre_tag") @db.VarChar(32)
+  qualityScore Int       @default(0) @map("quality_score") @db.SmallInt
+  embedStatus  Boolean   @default(true) @map("embed_status")
+  lastPlayedAt DateTime? @map("last_played_at")
+  cachedAt     DateTime  @default(now()) @updatedAt @map("cached_at") @db.Timestamp(6)
+  /// "search" | "playlist" | "channel".
+  source       String    @default("search")
+
+  @@index([genreTag], name: "idx_song_genre")
+  @@index([lastPlayedAt], name: "idx_song_last_played")
+  @@index([qualityScore], name: "idx_song_quality")
+  @@map("songs")
+}
+
+/// Daily YouTube API call log (per project, per endpoint). Drives burn-rate
+/// visibility and surfaces a suspended project / runaway job before quota is
+/// silently exhausted — read by the nightly maintenance view, not hot path.
+model ApiCallLog {
+  id         BigInt   @id @default(autoincrement()) @db.BigInt
+  projectId  Int?     @map("project_id") @db.SmallInt
+  endpoint   String   @db.VarChar(32)
+  unitCost   Int      @default(1) @map("unit_cost") @db.SmallInt
+  calledAt   DateTime @default(now()) @map("called_at") @db.Timestamp(6)
+
+  @@index([projectId, calledAt])
+  @@index([calledAt])
+  @@map("api_call_log")
 }
 
 /// Single-row catalog health/status flag. Lets the frontend and /api/health

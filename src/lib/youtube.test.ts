@@ -1,14 +1,60 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const prismaMock = vi.hoisted(() => ({
-  youTubeQuota: { findUnique: vi.fn(), upsert: vi.fn() },
-  youTubeVideo: { upsert: vi.fn(), findMany: vi.fn() },
-  youTubeVideoMapping: { upsert: vi.fn(), findUnique: vi.fn() },
+type Proj = { id: number; apiKey: string; dailyLimit: number };
+
+const poolMock = vi.hoisted(() => ({
+  hasProjects: vi.fn(() => true),
+  getAvailableProject: vi.fn(async (): Promise<Proj | null> => ({ id: 0, apiKey: "test-key", dailyLimit: 10000 })),
+  recordUsage: vi.fn(async () => {}),
+  UNIT_COST: { search: 100, playback: 1 },
+  dailySearchBudget: vi.fn(() => 100),
+  getQuotaStatus: vi.fn(),
+  endpointFor: vi.fn((p: string) => p.split("/").pop() ?? p),
 }));
+vi.mock("@/lib/youtube-pool", () => poolMock);
 
-vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
+const redisMock = vi.hoisted(() => ({
+  ytRedis: {
+    cacheGet: vi.fn(async (_key: string): Promise<unknown> => null),
+    cacheSet: vi.fn(async (_k: string, _v: unknown) => undefined),
+    cacheDel: vi.fn(async (_k: string) => undefined),
+    readCounter: vi.fn(async (_k: string) => 0),
+    incrCounter: vi.fn(async (_k: string, amount: number) => amount),
+    ping: vi.fn(async () => "PONG"),
+    configured: false,
+    healthy: vi.fn(async () => false),
+  },
+}));
+vi.mock("@/lib/yt-redis", () => ({ default: redisMock.ytRedis, ytRedis: redisMock.ytRedis, YtRedis: class {} }));
 
-import { fetchGenreVideos, isoDurationToSeconds, normalizeKey } from "@/lib/youtube";
+const dbMock = vi.hoisted(() => ({
+  upsertSong: vi.fn(async () => {}),
+  findSongByVideoId: vi.fn(async (_id: string): Promise<any | null> => null),
+  searchSongFuzzy: vi.fn(async (): Promise<any[] | null> => null),
+  findSongsByGenre: vi.fn(async () => []),
+  findGeneralSongs: vi.fn(async () => []),
+  findAllSongs: vi.fn(async () => []),
+  findSongsByIds: vi.fn(async () => []),
+  touchLastPlayed: vi.fn(async () => {}),
+  unitsUsedToday: vi.fn(async () => 0),
+  recordApiCall: vi.fn(async () => {}),
+  today: vi.fn(() => "2026-08-11"),
+  thumbnailFor: (id: string) => `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+  hasDedicatedCatalogDb: false,
+}));
+vi.mock("@/lib/youtube-db", () => dbMock);
+
+import {
+  fetchGenreVideos,
+  fetchQueryVideos,
+  isoDurationToSeconds,
+  isBlacklistedTitle,
+  isTopicChannel,
+  durationBounds,
+  normalizeKey,
+  resolveSongVideo,
+  parseTitle,
+} from "@/lib/youtube";
 
 describe("normalizeKey", () => {
   it("lowercases and strips accents + punctuation", () => {
@@ -42,18 +88,98 @@ describe("isoDurationToSeconds", () => {
   });
 });
 
+describe("isBlacklistedTitle", () => {
+  it("flags mixes, compilations, lives, karaoke, and track-length labels", () => {
+    for (const title of [
+      "Brazilian Funk Mix 2026",
+      "Melhores Funks do Ano — Compilation",
+      "Funk Full Album 1 Hour",
+      "Top 10 Brazilian Funk",
+      "Non-Stop Funk Session",
+      "MC Kevinho (Live)",
+      "Funk ao vivo",
+      "Cover: Ne Me Quitte Pas",
+      "Karaoke Brasileiro",
+      "Reaction to the Funk",
+      "Lyrics Video",
+      "Type Beat Brasileiro",
+      "Instrumental Only",
+      "mixes de ontem",
+      "mixtape do verão",
+    ]) {
+      expect(isBlacklistedTitle(title), title).toBe(true);
+    }
+  });
+
+  it("keeps official audio and remixes (remix intentionally not blacklisted)", () => {
+    for (const title of [
+      "Brasil Funk Banger",
+      "Anitta - Envolver (Official Audio)",
+      "MC Kevin - Remix",
+      "Official Music Video",
+      "delivery funk",
+      "mixed feelings",
+    ]) {
+      expect(isBlacklistedTitle(title), title).toBe(false);
+    }
+  });
+});
+
+describe("isTopicChannel", () => {
+  it("detects auto-generated Topic channels case-insensitively", () => {
+    expect(isTopicChannel("Anitta - Topic")).toBe(true);
+    expect(isTopicChannel("MC Kevinho - TOPIC")).toBe(true);
+    expect(isTopicChannel("Anitta Official")).toBe(false);
+    expect(isTopicChannel(null)).toBe(false);
+    expect(isTopicChannel(undefined)).toBe(false);
+  });
+});
+
+describe("durationBounds", () => {
+  it("uses the 150–420s window by default", () => {
+    expect(durationBounds()).toEqual({ min: 150, max: 420 });
+    expect(durationBounds("drift")).toEqual({ min: 150, max: 420 });
+  });
+
+  it("lowers the floor to 90s for Brazilian funk", () => {
+    expect(durationBounds("brazilian")).toEqual({ min: 90, max: 420 });
+    expect(durationBounds("brazilian-funk")).toEqual({ min: 90, max: 420 });
+  });
+});
+
+describe("parseTitle", () => {
+  it("parses Topic channels, separators and 'by' joins", () => {
+    expect(parseTitle("Envolver (Official Audio)", "Anitta - Topic")).toEqual({
+      songTitle: "Envolver",
+      artistName: "Anitta",
+    });
+    expect(parseTitle("Anitta - Envolver", null)).toEqual({
+      songTitle: "Envolver",
+      artistName: "Anitta",
+    });
+    expect(parseTitle("Envolver by Anitta", null)).toEqual({
+      songTitle: "Envolver",
+      artistName: "Anitta",
+    });
+    expect(parseTitle("Plain Song", null)).toEqual({ songTitle: "Plain Song", artistName: "" });
+  });
+});
+
 describe("fetchGenreVideos", () => {
   beforeEach(() => {
-    process.env.YOUTUBE_API_KEY = "test-key";
-    process.env.YOUTUBE_RUNTIME_FILL = "1";
-    prismaMock.youTubeQuota.findUnique.mockReset().mockResolvedValue(null);
-    prismaMock.youTubeQuota.upsert.mockReset().mockResolvedValue({});
-    prismaMock.youTubeVideo.upsert.mockReset().mockResolvedValue({});
-    prismaMock.youTubeVideoMapping.upsert.mockReset().mockResolvedValue({});
+    vi.clearAllMocks();
+    poolMock.hasProjects.mockReturnValue(true);
+    poolMock.getAvailableProject.mockResolvedValue({ id: 0, apiKey: "test-key", dailyLimit: 10000 });
+    poolMock.recordUsage.mockResolvedValue(undefined);
+    dbMock.upsertSong.mockResolvedValue(undefined);
+    dbMock.findSongByVideoId.mockResolvedValue(null);
+    dbMock.searchSongFuzzy.mockResolvedValue(null);
+    redisMock.ytRedis.cacheGet.mockResolvedValue(null);
   });
 
   afterEach(() => {
     delete process.env.YOUTUBE_API_KEY;
+    delete process.env.YOUTUBE_API_KEYS;
     delete process.env.YOUTUBE_RUNTIME_FILL;
     vi.unstubAllGlobals();
   });
@@ -112,10 +238,7 @@ describe("fetchGenreVideos", () => {
                 },
               ],
             };
-        return new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
       }),
     );
   }
@@ -129,30 +252,157 @@ describe("fetchGenreVideos", () => {
     expect(videos.every((v) => v.subgenre === "brazilian-fill-1")).toBe(true);
     expect(videos.every((v) => v.embeddable)).toBe(true);
     expect(videos[0].artistName).toBe("Br Funk"); // parsed from "- Topic" channel
-    expect(prismaMock.youTubeVideo.upsert).toHaveBeenCalledTimes(2);
-    expect(prismaMock.youTubeQuota.upsert).toHaveBeenCalled(); // search + videos.list ledger
+    expect(videos[0].thumbnail).toBe("https://i.ytimg.com/vi/g1/hqdefault.jpg"); // reconstructed
+    expect(dbMock.upsertSong).toHaveBeenCalledTimes(2);
+    expect(poolMock.recordUsage).toHaveBeenCalled(); // search + videos.list ledger
   });
 
-  it("does not search when the daily search budget is exhausted", async () => {
-    prismaMock.youTubeQuota.findUnique.mockResolvedValue({
-      id: 1,
-      date: "2026-08-10",
-      unitsUsed: 10000,
-      searches: 100,
-    });
+  it("does not search when the quota pool is exhausted", async () => {
+    poolMock.getAvailableProject.mockResolvedValue(null as unknown as Proj);
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
 
     const videos = await fetchGenreVideos("brazilian-fill-2", ["Brazilian Funk phonk"], 12);
     expect(videos).toHaveLength(0);
-    expect(prismaMock.youTubeQuota.upsert).not.toHaveBeenCalled();
+    expect(dbMock.upsertSong).not.toHaveBeenCalled();
+    // fetch is never reached once the pool refuses a project.
+    expect(vi.mocked(fetch as typeof globalThis.fetch)).not.toHaveBeenCalled();
   });
 
-  it("no-ops without an API key or when runtime fill is disabled", async () => {
-    delete process.env.YOUTUBE_API_KEY;
+  it("no-ops without projects or when runtime fill is disabled", async () => {
+    poolMock.hasProjects.mockReturnValue(false);
     expect(await fetchGenreVideos("fill-x", ["brasil phonk"], 5)).toEqual([]);
 
-    process.env.YOUTUBE_API_KEY = "k";
+    poolMock.hasProjects.mockReturnValue(true);
     process.env.YOUTUBE_RUNTIME_FILL = "0";
     expect(await fetchGenreVideos("fill-x2", ["brasil phonk"], 5)).toEqual([]);
+  });
+
+  it("drops mix compilations and shorts that pass the title/duration filters", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = new URL(String(input));
+        const isSearch = url.pathname.endsWith("/search");
+        const body = isSearch
+          ? {
+              items: [
+                { id: { videoId: "m1" }, snippet: { title: "Explicit Lover", channelId: "c1", channelTitle: "Explicit - Topic" } },
+                { id: { videoId: "m2" }, snippet: { title: "Explicit Lover (Mix 1 Hour)", channelId: "c9", channelTitle: "Funk Mixes" } },
+                { id: { videoId: "m3" }, snippet: { title: "Explicit Lover (clip)", channelId: "c8", channelTitle: "Clips Channel" } },
+              ],
+            }
+          : {
+              items: [
+                { id: "m1", snippet: { title: "Explicit Lover", channelId: "c1", channelTitle: "Explicit - Topic" }, contentDetails: { duration: "PT3M10S" }, status: { embeddable: true } },
+                { id: "m2", snippet: { title: "Explicit Lover (Mix 1 Hour)", channelId: "c9", channelTitle: "Funk Mixes" }, contentDetails: { duration: "PT1H2M3S" }, status: { embeddable: true } },
+                { id: "m3", snippet: { title: "Explicit Lover (clip)", channelId: "c8", channelTitle: "Clips Channel" }, contentDetails: { duration: "PT30S" }, status: { embeddable: true } },
+              ],
+            };
+        return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      }),
+    );
+
+    const videos = await fetchGenreVideos("brazilian-fill-3", ["Explicit Lover"], 12);
+    expect(videos.map((v) => v.videoId)).toEqual(["m1"]);
+    expect(videos[0].artistName).toBe("Explicit");
+  });
+
+  it("returns empty when the live search returns no items", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ items: [{ id: { videoId: "x1" }, snippet: { title: "Lyrics", channelTitle: "Lyric Channel" } }] }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const videos = await fetchGenreVideos("fill-lyrics", ["Something"], 12);
+    expect(videos).toHaveLength(0);
+  });
+
+  it("returns empty when the quota pool is exhausted mid search", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ items: [{ id: { videoId: "q1" }, snippet: { title: "Song", channelTitle: "Artist - Topic", thumbnails: { medium: { url: "u" } } } }] }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    poolMock.getAvailableProject.mockResolvedValue(null as unknown as Proj);
+
+    const videos = await fetchQueryVideos("Brodyaga Funk", 12, "brazilian");
+    expect(videos).toHaveLength(0);
+    expect(dbMock.upsertSong).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveSongVideo", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    poolMock.hasProjects.mockReturnValue(true);
+    poolMock.getAvailableProject.mockResolvedValue({ id: 0, apiKey: "test-key", dailyLimit: 10000 });
+    poolMock.recordUsage.mockResolvedValue(undefined);
+    dbMock.upsertSong.mockResolvedValue(undefined);
+    dbMock.findSongByVideoId.mockResolvedValue(null);
+    dbMock.searchSongFuzzy.mockResolvedValue(null);
+    redisMock.ytRedis.cacheGet.mockResolvedValue(null);
+    redisMock.ytRedis.cacheSet.mockResolvedValue(undefined);
+  });
+
+  it("returns the DB song from the Redis hot cache and skips the live search", async () => {
+    redisMock.ytRedis.cacheGet.mockImplementation(async (k: string) =>
+      k.startsWith("search:") ? "abc123" : null,
+    );
+    dbMock.findSongByVideoId.mockResolvedValue({
+      videoId: "abc123",
+      title: "Envolver",
+      artistName: "Anitta",
+      duration: 200,
+      thumbnail: "https://i.ytimg.com/vi/abc123/hqdefault.jpg",
+      channelId: "c1",
+      channelTitle: "Anitta - Topic",
+      embeddable: true,
+      subgenre: "brazilian",
+      source: "search",
+    });
+
+    const video = await resolveSongVideo("Envolver", "Anitta", "brazilian");
+    expect(video?.videoId).toBe("abc123");
+    expect(dbMock.findSongByVideoId).toHaveBeenCalledWith("abc123");
+    // No live search, no fuzzy lookup, no persistence.
+    expect(poolMock.getAvailableProject).not.toHaveBeenCalled();
+    expect(dbMock.searchSongFuzzy).not.toHaveBeenCalled();
+    expect(dbMock.upsertSong).not.toHaveBeenCalled();
+  });
+
+  it("falls through to a live search on a cold cache and caches the winner", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = new URL(String(input));
+        const isSearch = url.pathname.endsWith("/search");
+        const body = isSearch
+          ? { items: [{ id: { videoId: "live1" }, snippet: { title: "Funk Banger", channelTitle: "Br Funk - Topic", thumbnails: { medium: { url: "u" } } } }] }
+          : { items: [{ id: "live1", snippet: { title: "Funk Banger", channelTitle: "Br Funk - Topic" }, contentDetails: { duration: "PT2M30S" }, status: { embeddable: true } }] };
+        return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      }),
+    );
+
+    const video = await resolveSongVideo("Funk Banger", "Br Funk");
+    expect(video?.videoId).toBe("live1");
+    expect(dbMock.upsertSong).toHaveBeenCalledTimes(1);
+    expect(redisMock.ytRedis.cacheSet).toHaveBeenCalledWith(expect.stringMatching(/^search:/), "live1", 7200);
+  });
+
+  it("negative-caches the query when the pool is exhausted and no DB match exists", async () => {
+    poolMock.getAvailableProject.mockResolvedValue(null);
+
+    const video = await resolveSongVideo("Missing Song", "Nobody");
+    expect(video).toBeNull();
+    expect(redisMock.ytRedis.cacheSet).toHaveBeenCalledWith(expect.stringMatching(/^neg:/), "1", 1800);
+    expect(dbMock.upsertSong).not.toHaveBeenCalled();
   });
 });

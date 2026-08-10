@@ -5,7 +5,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
-import { Heart, History, Home, Library, ListMusic, Plus, Search, Settings, Sparkles } from "lucide-react";
+import { Heart, History, Home, Library, ListMusic, Plus, Radar, Search, Settings, Sparkles } from "lucide-react";
 
 import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ const navigation = [
   { href: "/app/home", label: "Home", icon: Home },
   { href: "/app/search", label: "Search", icon: Search },
   { href: "/app/genres", label: "Genres", icon: Sparkles },
+  { href: "/app/recommendations", label: "Recommendations", icon: Radar },
   { href: "/app/library", label: "Library", icon: Library },
   { href: "/app/liked", label: "Liked songs", icon: Heart },
   { href: "/app/history", label: "History", icon: History },

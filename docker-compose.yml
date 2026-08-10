@@ -42,8 +42,15 @@ services:
       AUTH_EMAIL_FROM: "${AUTH_EMAIL_FROM:-noreply@phonq.app}"
       NEXT_PUBLIC_APP_URL: "${NEXT_PUBLIC_APP_URL:-http://localhost:3000}"
       JAMENDO_CLIENT_ID: "${JAMENDO_CLIENT_ID:-}"
+      YOUTUBE_API_KEYS: "${YOUTUBE_API_KEYS:-}"
       YOUTUBE_API_KEY: "${YOUTUBE_API_KEY:-}"
-      YOUTUBE_DAILY_SEARCH_BUDGET: "${YOUTUBE_DAILY_SEARCH_BUDGET:-}"
+      YOUTUBE_SEARCH_PROJECTS: "${YOUTUBE_SEARCH_PROJECTS:-2}"
+      # Optional Upstash Redis accelerator (omit for the in-memory dev shim).
+      UPSTASH_REDIS_REST_URL: "${UPSTASH_REDIS_REST_URL:-}"
+      UPSTASH_REDIS_REST_TOKEN: "${UPSTASH_REDIS_REST_TOKEN:-}"
+      # Monthly prune tunables for the YouTube catalog (npm run prune:youtube).
+      YOUTUBE_PRUNE_MIN_QUALITY: "${YOUTUBE_PRUNE_MIN_QUALITY:-30}"
+      YOUTUBE_PRUNE_MAX_AGE_DAYS: "${YOUTUBE_PRUNE_MAX_AGE_DAYS:-60}"
     depends_on:
       db:
         condition: service_healthy

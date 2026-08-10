@@ -108,3 +108,60 @@ export function groupByDate<T>(items: T[], dateKey: (item: T) => Date | string):
 
   return Array.from(groups.entries()).map(([label, items]) => ({ label, items }));
 }
+
+/** Strip HTML tags from a Jamendo bio string so it can be rendered as text
+ * safely (no sanitizer dependency shipped with the repo). */
+export function stripHtml(html: string | null | undefined): string {
+  if (!html) return "";
+  return html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Build a link to an artist's page, or null when no page exists (e.g.
+ * YouTube-sourced tracks whose artist id isn't a Jamendo id). */
+export function getArtistHref(artistId: string, artistName: string): string | null {
+  if (!artistId || !/^\d+$/.test(artistId) || !artistName) return null;
+  return `/app/artists/${encodeURIComponent(artistId)}`;
+}
+
+/** Build a link to an album's page, or null when the album id is unknown. */
+export function getAlbumHref(albumId: string): string | null {
+  if (!albumId || !/^\d+$/.test(albumId)) return null;
+  return `/app/albums/${encodeURIComponent(albumId)}`;
+}
+
+/**
+ * Pure helper for the queue "drag to reorder" feature: returns a new array with
+ * the item at `from` moved to `to`. Out-of-range or no-op indices return the
+ * input unchanged.
+ */
+export function reorderArray<T>(items: T[], from: number, to: number): T[] {
+  const len = items.length;
+  if (from === to || from < 0 || from >= len || to < 0 || to >= len) return items;
+  const next = [...items];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/** Like `reorderArray`, but also reports the new index of the element that
+ * lived at `currentIndex` after the move (matched by reference, so duplicate
+ * track ids in the queue are tracked correctly). `index` is `undefined` when
+ * the move is a no-op or the index can't be resolved. */
+export function reorderWithIndex<T>(items: T[], from: number, to: number, currentIndex: number): { items: T[]; index: number | undefined } {
+  const next = reorderArray(items, from, to);
+  if (next === items) return { items, index: undefined };
+  let index: number | undefined;
+  if (currentIndex >= 0 && currentIndex < items.length) {
+    const current = items[currentIndex];
+    const newIndex = next.indexOf(current);
+    if (newIndex !== -1) index = newIndex;
+  }
+  return { items: next, index };
+}

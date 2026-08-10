@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 
 import { YouTubeEngine, type YouTubeEngineHandle, type YouTubeEngineState } from "@/components/player/youtube-engine";
 import type { Track } from "@/lib/jamendo";
+import { reorderWithIndex } from "@/lib/utils";
 
 type RepeatMode = "off" | "all" | "one";
 
@@ -39,6 +40,7 @@ interface PlayerContextValue {
   cycleRepeat: () => void;
   setQueueOpen: (open: boolean) => void;
   removeFromQueue: (index: number) => void;
+  reorderQueue: (fromIndex: number, toIndex: number) => void;
   clearQueue: () => void;
   jumpTo: (index: number) => void;
 }
@@ -155,22 +157,28 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   /** Refetches the signed-in user's favorite ids so the player-bar heart stays in sync. */
   React.useEffect(() => {
-    if (!currentTrack || sessionStatus !== "authenticated") return;
+    if (typeof window === "undefined") return;
     let cancelled = false;
-    void (async () => {
+
+    const refresh = async () => {
+      if (sessionStatus !== "authenticated") return;
       try {
-        const res = await fetch("/api/me/favorites");
+        const res = await fetch("/api/me/favorites", { cache: "no-store" });
         if (!res.ok || cancelled) return;
         const data = await res.json();
         setFavoriteIds(new Set((data.favorites ?? []).map((f: { trackId: string }) => f.trackId)));
       } catch {
         /* ignore */
       }
-    })();
+    };
+
+    void refresh();
+    window.addEventListener("focus", refresh);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", refresh);
     };
-  }, [currentTrack, sessionStatus]);
+  }, [sessionStatus]);
 
   const setFavorite = React.useCallback((trackId: string, liked: boolean) => {
     setFavoriteIds((prev) => {
@@ -327,6 +335,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setQueueIndex(Math.min(current, nextQueue.length - 1));
       }
     }
+  }, []);
+
+  /** Reorder the queue by dragging a track from `from` to `to`. The current
+   * track's cursor is re-pointed at its new index (matched by object identity,
+   * so duplicate track ids in the queue are handled correctly). */
+  const reorderQueue = React.useCallback((from: number, to: number) => {
+    const q = queueRef.current;
+    const { items: next, index: newIndex } = reorderWithIndex(q, from, to, queueIndexRef.current);
+    if (next === q) return; // no-op (out of range or identical indices)
+    setQueue(next);
+    if (newIndex !== undefined && newIndex !== queueIndexRef.current) setQueueIndex(newIndex);
   }, []);
 
   const clearQueue = React.useCallback(() => {
@@ -692,6 +711,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       cycleRepeat,
       setQueueOpen,
       removeFromQueue,
+      reorderQueue,
       clearQueue,
       jumpTo,
     }),
@@ -724,6 +744,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       removeFromQueue,
       clearQueue,
       jumpTo,
+      reorderQueue,
     ],
   );
 

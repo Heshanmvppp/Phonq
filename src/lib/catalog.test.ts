@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
     fetchTracks: vi.fn(),
     fetchTrack: vi.fn(),
     fetchTracksByIds: vi.fn(),
+    fetchArtist: vi.fn(),
+    fetchTracksByArtist: vi.fn(),
+    fetchAlbum: vi.fn(),
+    fetchTracksByAlbum: vi.fn(),
     fetchRadios: vi.fn(),
     fetchTrendingPhonk: vi.fn(),
     fetchFreshDrops: vi.fn(),
@@ -58,7 +62,8 @@ vi.mock("@/lib/youtube", () => ({
 
 import * as jamendo from "@/lib/jamendo";
 import * as youtube from "@/lib/youtube";
-import { fetchTracksByIds, fetchTrack, fetchFreshDrops, fetchRadios, fetchSubgenreTracks, fetchTracks, fetchTrendingPhonk, getCatalogStatus, searchTracks } from "@/lib/catalog";
+import type { Track, Artist, Album } from "@/lib/jamendo";
+import { fetchTracksByIds, fetchTrack, fetchFreshDrops, fetchRadios, fetchSubgenreTracks, fetchTracks, fetchTrendingPhonk, getCatalogStatus, searchTracks, fetchArtist, fetchArtistTracks, fetchSimilarArtists, fetchAlbum, fetchAlbumTracks, groupTracksByAlbum } from "@/lib/catalog";
 
 const liveTracks = [
   {
@@ -368,5 +373,197 @@ describe("subgenre genre-gap fill", () => {
     mocks.youtube.fetchGenreVideos.mockResolvedValue([same]);
     const tracks = await fetchSubgenreTracks("brazilian", 12);
     expect(tracks).toHaveLength(1);
+  });
+});
+
+describe("artist & album pages", () => {
+  const baseTrack: Track = {
+    id: "t1",
+    name: "Drift Banger",
+    duration: 180,
+    artistId: "1",
+    artistName: "DJ Phantom",
+    albumId: "a1",
+    albumName: "Vol. 1",
+    audioUrl: "https://cdn.example/t1.mp3",
+    downloadUrl: "https://cdn.example/t1.mp3",
+    image: null,
+    imageSmall: null,
+    licenseName: "CC BY",
+    genre: "phonk",
+    bpm: 140,
+    speed: "medium",
+    vocalInstrumental: "instrumental",
+    tags: ["drift", "phonk"],
+    popularityWeek: 500,
+    popularityTotal: 5000,
+    listensTotal: 10000,
+    downloadsTotal: 200,
+    releaseDate: "2024-02-02",
+    audioDownloadAllowed: true,
+  };
+  const track = (over: Partial<Track>): Track => ({ ...baseTrack, ...over });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.prisma.catalogStatus.upsert.mockResolvedValue(undefined);
+    mocks.prisma.catalogStatus.findUnique.mockResolvedValue(null);
+    mocks.prisma.cachedTrack.findMany.mockResolvedValue([]);
+    mocks.prisma.cachedTrack.count.mockResolvedValue(0);
+    mocks.prisma.cachedTrack.upsert.mockResolvedValue({});
+    mocks.youtube.fetchCachedSubgenreVideos.mockResolvedValue([]);
+    mocks.youtube.fetchGenreVideos.mockResolvedValue([]);
+    // Reset the cross-test write-status throttle so writeSuccessStatus isn't skipped.
+    (globalThis as { __phonqStatusAt?: number; __phonqDegradedUntil?: number }).__phonqStatusAt = 0;
+    (globalThis as { __phonqStatusAt?: number; __phonqDegradedUntil?: number }).__phonqDegradedUntil = 0;
+  });
+
+  describe("fetchArtist", () => {
+    it("returns the live Jamendo artist and marks the catalog healthy", async () => {
+      vi.mocked(jamendo.fetchArtist).mockResolvedValue({ id: "1", name: "DJ Phantom", image: "img", imageSmall: "small", website: "https://site", location: "US", joindate: "2020-01-01", nbTracks: 12, nbAlbums: 2, nbFans: 100, bio: "beat maker" });
+
+      const artist = await fetchArtist("1");
+      expect(artist?.name).toBe("DJ Phantom");
+      expect(mocks.prisma.catalogStatus.upsert).toHaveBeenCalled();
+    });
+
+    it("aggregates an artist from the DB cache when the live API is down", async () => {
+      vi.mocked(jamendo.fetchArtist).mockRejectedValue(new Error("down"));
+      mocks.prisma.cachedTrack.findMany.mockResolvedValue([
+        { id: "t1", artistId: "1", artistName: "DJ Phantom", image: "img", imageSmall: "small" },
+        { id: "t2", artistId: "1", artistName: "DJ Phantom", image: null, imageSmall: null, albumId: "a1" },
+      ]);
+
+      const artist = await fetchArtist("1");
+      expect(artist).not.toBeNull();
+      expect(artist?.name).toBe("DJ Phantom");
+      expect(artist?.image).toBe("img");
+      expect(artist?.nbTracks).toBe(2);
+      expect(artist?.nbAlbums).toBe(1);
+    });
+
+    it("returns null for non-Jamendo (YouTube) artist ids", async () => {
+      expect(await fetchArtist("yt:chan")).toBeNull();
+    });
+  });
+
+  describe("fetchArtistTracks", () => {
+    it("serves live tracks by artist id and persists them to the cache", async () => {
+      vi.mocked(jamendo.fetchTracksByArtist).mockResolvedValue([
+        track({ id: "t1", artistId: "1", artistName: "DJ Phantom", albumId: "a1", albumName: "Vol. 1", subgenre: "drift" }),
+      ]);
+
+      const tracks = await fetchArtistTracks("1", "DJ Phantom", 10);
+      expect(tracks.map((t) => t.id)).toEqual(["t1"]);
+      expect(mocks.prisma.cachedTrack.upsert).toHaveBeenCalled();
+    });
+
+    it("falls back to a by-name DB cache query when the artistName is provided and live is down", async () => {
+      vi.mocked(jamendo.fetchTracksByArtist).mockRejectedValue(new Error("down"));
+      mocks.prisma.cachedTrack.findMany.mockResolvedValue([
+        { id: "50", name: "Cached", artistId: "1", artistName: "DJ Phantom", albumId: "a1", albumName: "Vol. 1", image: "img", imageSmall: null, tags: "drift phonk", genre: "phonk", bpm: 140, releaseDate: "2024-01-01", popularityWeek: 5 },
+      ]);
+
+      const tracks = await fetchArtistTracks("1", "DJ Phantom", 10);
+      expect(tracks).toHaveLength(1);
+      expect(tracks[0].artistName).toBe("DJ Phantom");
+    });
+  });
+
+  describe("fetchAlbum / fetchAlbumTracks", () => {
+    it("returns the live Jamendo album when available", async () => {
+      vi.mocked(jamendo.fetchAlbum).mockResolvedValue({ id: "5", name: "Night Drive", artistId: "1", artistName: "DJ Phantom", image: "img", imageSmall: "small", releaseDate: "2024-03-03", nbTracks: 1 } as never);
+
+      const album = await fetchAlbum("5");
+      expect(album?.id).toBe("5");
+      expect(album?.name).toBe("Night Drive");
+    });
+
+    it("builds album metadata from the DB cache when the live API is down", async () => {
+      vi.mocked(jamendo.fetchAlbum).mockRejectedValue(new Error("down"));
+      mocks.prisma.cachedTrack.findMany.mockResolvedValue([
+        { id: "50", name: "Track A", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", image: "img", imageSmall: null, tags: "drift", genre: "phonk", bpm: 140, releaseDate: "2024-03-03", popularityWeek: 5 },
+        { id: "51", name: "Track B", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", image: null, imageSmall: null, tags: "phonk", genre: "phonk", bpm: 138, releaseDate: "2024-01-01", popularityWeek: 4 },
+      ]);
+
+      const album = await fetchAlbum("5");
+      expect(album).not.toBeNull();
+      expect(album?.name).toBe("Night Drive");
+      expect(album?.nbTracks).toBe(2);
+      // Earliest release date of the album's members wins.
+      expect(album?.releaseDate).toBe("2024-01-01");
+      expect(album?.image).toBe("img");
+    });
+
+    it("fetchAlbumTracks dedupes and slices to the requested limit from the cache", async () => {
+      vi.mocked(jamendo.fetchTracksByAlbum).mockRejectedValue(new Error("down"));
+      mocks.prisma.cachedTrack.findMany.mockResolvedValue([
+        { id: "50", name: "Track A", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", image: null, imageSmall: null, tags: "phonk", genre: "phonk", bpm: 140, releaseDate: "2024-01-01", popularityWeek: 5 },
+        { id: "50", name: "Track A", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", image: null, imageSmall: null, tags: "phonk", genre: "phonk", bpm: 140, releaseDate: "2024-01-01", popularityWeek: 5 },
+        { id: "51", name: "Track B", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", image: null, imageSmall: null, tags: "phonk", genre: "phonk", bpm: 138, releaseDate: "2024-02-02", popularityWeek: 4 },
+      ]);
+
+      const tracks = await fetchAlbumTracks("5", 2);
+      expect(tracks.map((t) => t.id)).toEqual(["50", "51"]);
+    });
+  });
+
+  describe("fetchSimilarArtists", () => {
+    it("derives similar artists per subgenre, excluding the target artist and merging duplicates", async () => {
+      vi.mocked(jamendo.fetchTracks).mockResolvedValueOnce([
+        track({ id: "s1", artistId: "9", artistName: "MC Drift", subgenre: "drift" }),
+        track({ id: "s2", artistId: "9", artistName: "MC Drift", subgenre: "drift" }),
+        track({ id: "s4", artistId: "1", artistName: "Target Artist", subgenre: "drift" }), // excluded (target)
+        track({ id: "s5", artistId: "7", artistName: "Other Mood", subgenre: "drift" }),
+      ]);
+
+      const similar = await fetchSimilarArtists("1", "Target Artist", [track({ id: "t", artistId: "1", artistName: "Target Artist", subgenre: "drift" })]);
+      // Target excluded; MC Drift (artistId "9") merges to weight 2 → first; Other Mood → second.
+      expect(similar.map((a) => a.name)).toEqual(["MC Drift", "Other Mood"]);
+      expect(similar).toHaveLength(2);
+    });
+
+    it("drops YouTube-sourced artist ids (yt: prefix)", async () => {
+      vi.mocked(jamendo.fetchTracks).mockResolvedValueOnce([
+        track({ id: "y1", artistId: "yt:chan", artistName: "YT Channel", subgenre: "drift" }),
+        track({ id: "s1", artistId: "9", artistName: "Real Artist", subgenre: "drift" }),
+      ]);
+
+      const similar = await fetchSimilarArtists("1", "Target", [track({ id: "t", artistId: "1", artistName: "Target", subgenre: "drift" })]);
+      expect(similar.map((a) => a.id)).toEqual(["9"]);
+    });
+
+    it("returns an empty list when none of the artist's tracks carry a subgenre", async () => {
+      const result = await fetchSimilarArtists("1", "Target", [track({ id: "t", artistId: "1", artistName: "Target" })]);
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe("groupTracksByAlbum", () => {
+    it("splits tracks into album groups and a trailing singles group, sorted oldest-first", () => {
+      const tracks = [
+        track({ id: "a1", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", releaseDate: "2024-03-03", image: "img1" }),
+        track({ id: "a2", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", releaseDate: "2024-01-01", image: "img2" }),
+        track({ id: "a3", artistId: "1", artistName: "DJ Phantom", albumId: "6", albumName: "Later", releaseDate: "2024-05-05", image: "img3" }),
+        track({ id: "s1", artistId: "1", artistName: "DJ Phantom", albumId: "", albumName: "", image: null, imageSmall: "small" }),
+      ];
+
+      const groups = groupTracksByAlbum(tracks);
+      expect(groups.map((g) => g.album.id)).toEqual(["5", "6", "singles"]);
+      // Albums appear oldest-first.
+      expect(groups[0].album.releaseDate).toBe("2024-01-01");
+      expect(groups[0].album.nbTracks).toBe(2);
+      expect(groups[2].album.nbTracks).toBe(1);
+      expect(groups[2].album.image).toBe("small");
+    });
+
+    it("uses the first available cover for an album group", () => {
+      const tracks = [
+        track({ id: "a1", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", releaseDate: "2024-01-01", image: null }),
+        track({ id: "a2", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", releaseDate: "2024-02-02", imageSmall: "fallback" }),
+      ];
+      const groups = groupTracksByAlbum(tracks);
+      expect(groups[0].album.image).toBe("fallback");
+    });
   });
 });

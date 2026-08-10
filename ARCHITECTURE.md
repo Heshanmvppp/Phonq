@@ -15,9 +15,19 @@ Browser
             │
             ├─ Catalog layer (src/lib/catalog.ts)
             │     ├─ Jamendo API (https://api.jamendo.com/v3.0) ── audio streams + metadata (default)
-            │     ├─ YouTube Data API (src/lib/youtube.ts) ── genre-gap fill via IFrame Player
-            │     │     ├─ Postgres `youtube_videos` + `youtube_video_mappings` ── search cache
-            │     │     └─ Postgres `youtube_quota` ── daily search budget ledger
+            │     ├─ YouTube Data API v3 ── genre-gap fill via IFrame Player
+            │     │     ├─ src/lib/youtube.ts ── resolve/search/cache orchestration
+            │     │     ├─ src/lib/youtube-pool.ts ── **10-project quota pool router**
+            │     │     │     • first N searches (default 2) back live `search.list`
+            │     │     │     • remaining keys backfill playlists/channels (1-unit ops)
+            │     │     │     • per-project/per-op unit counters kept in Redis
+            │     │     ├─ src/lib/yt-redis.ts ── **Redis accelerator** (Upstash REST)
+            │     │     │     • hot `search:{q}` lookups + negative cache + pool counters
+            │     │     │     • optional: degrades to Postgres when absent, to in-memory in dev
+            │     │     └─ src/lib/youtube-db.ts ── Prisma client
+            │     │           • main app DB (shared) OR dedicated Neon `YOUTUBE_DATABASE_URL`
+            │     │           • `songs` (lean catalog), `api_call_log` (daily burn-rate ledger)
+            │     │           • nightly prune job (`scripts/prune-youtube.ts`) trims stale rows
             │     ├─ Postgres `cached_tracks` ── cache when upstream fails
             │     └─ Bundled static snapshot ── always-on fallback
             └─ Neon PostgreSQL (via Prisma + @prisma/adapter-neon) ── user data
@@ -41,7 +51,7 @@ back in a ladder (below).
 | `src/components/embed` | Minimal client player used by the `/embed/[id]` route. |
 | `src/components/track`  | Track cards/rows + favorite/playlist/share actions. |
 | `src/components/ui`     | Minimal design-system primitives (no component library). |
-| `src/lib`           | `catalog.ts` (resilient catalog layer), `jamendo.ts` (upstream client), `auth.ts`, `prisma.ts`, `rate-limit.ts`, `api.ts`, `utils.ts`. |
+| `src/lib`           | `catalog.ts` (resilient catalog layer), `jamendo.ts` (upstream client), `youtube.ts` + `youtube-pool.ts` + `yt-redis.ts` + `youtube-db.ts` (YouTube catalog), `auth.ts`, `prisma.ts`, `rate-limit.ts`, `api.ts`, `utils.ts`. |
 | `src/content`       | Typed content for the marketing site + the bundled `featured-tracks`/`featured-radios` fallback. |
 
 ## Data model
@@ -56,9 +66,11 @@ outputs to `src/generated/prisma`. Tables:
 - `listens` — history (one row per user+track, updated with progress)
 - `cached_tracks` — last successful catalog responses (track lists), for the cache tier
 - `catalog_status` — single row recording last success/failure and the current provider
-- `youtube_videos` — YouTube videos cached for genre-gap fill (metadata + `source` = search|playlist)
-- `youtube_video_mappings` — song_title + artist → video_id cache; a hit skips `search.list`
-- `youtube_quota` — daily YouTube API quota ledger (units + search count), for the search budget
+- `songs` — lean YouTube catalog (one row per video, ~1 KB): metadata + `genre_tag` +
+  `quality_score` + `last_played_at`; lives in a dedicated Neon DB when
+  `YOUTUBE_DATABASE_URL` is set, else in the main app DB
+- `api_call_log` — daily per-project YouTube API call log (burn-rate visibility; surfaces
+  a suspended/quota-exhausted project before the search budget is silently spent)
 
 The catalog is **not** a primary store. It lives on Jamendo (with YouTube filling genre
 gaps), and Phonq degrades in a ladder: live Jamendo → `cached_tracks` (Postgres, written

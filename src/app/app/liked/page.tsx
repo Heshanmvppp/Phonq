@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { Heart } from "lucide-react";
 
@@ -9,6 +10,7 @@ import { fetchTracksByIds } from "@/lib/catalog";
 import { TrackRow } from "@/components/track/track-row";
 import { SectionHeading } from "@/components/marketing/section-heading";
 import { EmptyState } from "@/components/ui/empty-state";
+import { RowListSkeleton } from "@/components/layout/skeletons";
 
 export const metadata: Metadata = {
   title: "Liked songs",
@@ -16,7 +18,17 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default async function LikedPage() {
+export default function LikedPage() {
+  return (
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <Suspense fallback={<RowListSkeleton rows={8} />}>
+        <LikedContent />
+      </Suspense>
+    </div>
+  );
+}
+
+async function LikedContent() {
   const session = await auth();
   if (!session?.user?.id) return null;
 
@@ -33,7 +45,7 @@ export default async function LikedPage() {
     .filter((t): t is NonNullable<typeof t> => t != null);
 
   return (
-    <div className="px-4 py-8 sm:px-6 lg:px-8">
+    <>
       <SectionHeading
         align="left"
         eyebrow="Library"
@@ -56,6 +68,6 @@ export default async function LikedPage() {
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }

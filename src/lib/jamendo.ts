@@ -56,6 +56,68 @@ export interface JamendoRadio {
   image: string;
 }
 
+export interface JamendoArtist {
+  id: string | number;
+  name: string;
+  image?: string;
+  image_small?: string;
+  website?: string;
+  joindate?: string;
+  location?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  nb_tracks?: number;
+  nb_albums?: number;
+  nb_fans?: number;
+  bioid?: string;
+}
+
+export interface JamendoArtistBio {
+  artist_id: string | number;
+  bioid: string;
+  languages?: string[];
+  text: string;
+}
+
+export interface JamendoAlbum {
+  id: string | number;
+  name: string;
+  artist_id: string | number;
+  artist_name: string;
+  image?: string;
+  image_small?: string;
+  releasedate?: string;
+  joindate?: string;
+  zip?: string;
+  nb_tracks?: number;
+  website?: string;
+}
+
+export interface Artist {
+  id: string;
+  name: string;
+  image: string | null;
+  imageSmall: string | null;
+  website: string | null;
+  location: string | null;
+  joindate: string | null;
+  nbTracks: number | null;
+  nbAlbums: number | null;
+  nbFans: number | null;
+  bio: string | null;
+}
+
+export interface Album {
+  id: string;
+  name: string;
+  artistId: string;
+  artistName: string;
+  image: string | null;
+  imageSmall: string | null;
+  releaseDate: string | null;
+  nbTracks: number | null;
+}
+
 export interface Track {
   id: string;
   name: string;
@@ -234,6 +296,35 @@ export function normalizeTrack(t: JamendoTrack): Track {
   };
 }
 
+export function normalizeArtist(a: JamendoArtist, bio: string | null = null): Artist {
+  return {
+    id: String(a.id),
+    name: a.name || "Unknown Artist",
+    image: a.image || null,
+    imageSmall: a.image_small || a.image || null,
+    website: a.website || null,
+    location: a.location || null,
+    joindate: a.joindate || null,
+    nbTracks: typeof a.nb_tracks === "number" ? a.nb_tracks : null,
+    nbAlbums: typeof a.nb_albums === "number" ? a.nb_albums : null,
+    nbFans: typeof a.nb_fans === "number" ? a.nb_fans : null,
+    bio,
+  };
+}
+
+export function normalizeAlbum(a: JamendoAlbum): Album {
+  return {
+    id: String(a.id),
+    name: a.name || "Unknown Album",
+    artistId: String(a.artist_id ?? ""),
+    artistName: a.artist_name || "Unknown Artist",
+    image: a.image || null,
+    imageSmall: a.image_small || a.image || null,
+    releaseDate: a.releasedate || null,
+    nbTracks: typeof a.nb_tracks === "number" ? a.nb_tracks : null,
+  };
+}
+
 export interface TracksParams {
   search?: string;
   tags?: string[];
@@ -242,6 +333,8 @@ export interface TracksParams {
   limit?: number;
   offset?: number;
   ids?: string[];
+  artistId?: string;
+  albumId?: string;
   /** Curate results to a single phonk subgenre (handled by the catalog layer). */
   subgenre?: string;
 }
@@ -257,6 +350,8 @@ export async function fetchTracks(params: TracksParams = {}): Promise<Track[]> {
       limit: params.limit ?? 24,
       offset: params.offset,
       id: params.ids,
+      artist_id: params.artistId,
+      album_id: params.albumId,
       include: ["musicinfo", "stats"],
     },
     { ttlMs: params.search ? 5 * 60 * 1000 : CACHE_TTL_MS },
@@ -309,4 +404,54 @@ export async function searchTracks(query: string, limit = 30, subgenre?: string)
   if (!query.trim()) return [];
   const tags = subgenre ? (getSubgenre(subgenre)?.jamendoTags ?? PHONK_FAMILY_QUERY_TAGS) : PHONK_FAMILY_QUERY_TAGS;
   return fetchTracks({ search: query.trim(), tags, limit });
+}
+
+/**
+ * Fetch a single artist's metadata (name, image, bio, stats). The bio lives on
+ * a separate endpoint (`/artists/bio`) keyed by the artist's `bioid`, so it's
+ * fetched lazily only when Jamendo returns one.
+ */
+export async function fetchArtist(artistId: string): Promise<Artist | null> {
+  const results = await get<JamendoArtist[]>("artists", { id: artistId });
+  if (!results || results.length === 0) return null;
+  const a = results[0]!;
+  let bio: string | null = null;
+  if (a.bioid) {
+    try {
+      const bios = await get<JamendoArtistBio[]>("artists/bio", { id: artistId, bioid: a.bioid });
+      if (bios && bios.length > 0 && bios[0] && bios[0]!.text) bio = bios[0]!.text;
+    } catch {
+      bio = null;
+    }
+  }
+  return normalizeArtist(a, bio);
+}
+
+/** Fetch a single album's metadata (name, artist, cover, release date) from Jamendo. */
+export async function fetchAlbum(albumId: string): Promise<Album | null> {
+  const results = await get<JamendoAlbum[]>("albums", { id: albumId });
+  if (!results || results.length === 0) return null;
+  return normalizeAlbum(results[0]!);
+}
+
+/** All tracks belonging to an artist (no curation — full discography). */
+export async function fetchTracksByArtist(artistId: string, limit = 50, offset = 0): Promise<Track[]> {
+  const results = await get<JamendoTrack[]>("tracks", {
+    artist_id: artistId,
+    limit,
+    offset,
+    include: ["musicinfo", "stats"],
+  });
+  return results.map(normalizeTrack);
+}
+
+/** All tracks belonging to an album (track listing for an album page). */
+export async function fetchTracksByAlbum(albumId: string, limit = 50, offset = 0): Promise<Track[]> {
+  const results = await get<JamendoTrack[]>("tracks", {
+    album_id: albumId,
+    limit,
+    offset,
+    include: ["musicinfo", "stats"],
+  });
+  return results.map(normalizeTrack);
 }

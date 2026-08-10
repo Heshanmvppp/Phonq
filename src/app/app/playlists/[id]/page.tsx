@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
+
 import { notFound } from "next/navigation";
 
 import { auth } from "@/lib/auth";
@@ -7,6 +9,7 @@ import { fetchTracksByIds } from "@/lib/catalog";
 
 import { PlaylistTracks } from "./playlist-tracks";
 import { PlaylistActions } from "./playlist-actions";
+import { RowListSkeleton } from "@/components/layout/skeletons";
 
 interface PlaylistDetailPageProps {
   params: Promise<{ id: string }>;
@@ -27,16 +30,11 @@ export default async function PlaylistDetailPage({ params }: PlaylistDetailPageP
   const session = await auth();
   if (!session?.user?.id) notFound();
 
-  const playlist = await prisma.playlist.findFirst({ where: { id, userId: session.user.id } });
+  const [playlist, trackCount] = await Promise.all([
+    prisma.playlist.findFirst({ where: { id, userId: session.user.id } }),
+    prisma.playlistTrack.count({ where: { playlistId: id } }),
+  ]);
   if (!playlist) notFound();
-
-  const entries = await prisma.playlistTrack.findMany({
-    where: { playlistId: id },
-    orderBy: { position: "asc" },
-    select: { trackId: true },
-  });
-
-  const tracks = await fetchTracksByIds(entries.map((e) => e.trackId));
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -48,13 +46,27 @@ export default async function PlaylistDetailPage({ params }: PlaylistDetailPageP
             <p className="mt-2 max-w-lg text-sm text-muted-foreground">{playlist.description}</p>
           )}
           <p className="mt-2 text-xs text-muted-foreground">
-            {tracks.length} track{tracks.length === 1 ? "" : "s"}
+            {trackCount} track{trackCount === 1 ? "" : "s"}
           </p>
         </div>
         <PlaylistActions playlistId={id} name={playlist.name} />
       </div>
 
-      <PlaylistTracks playlistId={id} tracks={tracks} />
+      <Suspense fallback={<RowListSkeleton rows={10} />}>
+        <PlaylistTracksContent playlistId={id} />
+      </Suspense>
     </div>
   );
+}
+
+async function PlaylistTracksContent({ playlistId }: { playlistId: string }) {
+  const entries = await prisma.playlistTrack.findMany({
+    where: { playlistId },
+    orderBy: { position: "asc" },
+    select: { trackId: true },
+  });
+
+  const tracks = await fetchTracksByIds(entries.map((e) => e.trackId));
+
+  return <PlaylistTracks playlistId={playlistId} tracks={tracks} />;
 }

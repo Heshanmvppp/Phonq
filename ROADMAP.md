@@ -11,16 +11,16 @@ The public roadmap is also rendered on the site at [phonq.vercel.app/product/roa
 
 ## v1.1 — In progress
 
-- [ ] Artist pages (discography, bio, similar artists)
-- [ ] Album pages & discography
+- [x] Artist pages (discography, bio, similar artists)
+- [x] Album pages & discography
 - [ ] Download buttons with license display
 
 ## v1.2 — Planned
 
-- [ ] Queue drag-and-drop reordering
-- [ ] Personalized recommendations from your history
+- [x] Queue drag-and-drop reordering
+- [x] Personalized recommendations from your history
 - [ ] i18n (translations)
-- [ ] Automated tests (Vitest for API routes + player state)
+- [x] Automated tests (Vitest for API routes + player state)
 
 ## v1.3 — Under consideration
 

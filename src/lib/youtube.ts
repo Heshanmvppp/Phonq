@@ -1,6 +1,29 @@
 import "server-only";
 
-import { prisma } from "@/lib/prisma";
+import ytRedis from "@/lib/yt-redis";
+import {
+  UNIT_COST,
+  dailySearchBudget,
+  endpointFor,
+  getAvailableProject,
+  getQuotaStatus,
+  hasProjects,
+  recordUsage,
+  type OpType,
+} from "@/lib/youtube-pool";
+import {
+  findGeneralSongs,
+  findSongByVideoId,
+  findSongsByGenre,
+  findSongsByIds,
+  findAllSongs,
+  searchSongFuzzy,
+  thumbnailFor,
+  touchLastPlayed,
+  unitsUsedToday,
+  upsertSong,
+  type SongInput,
+} from "@/lib/youtube-db";
 
 /**
  * YouTube Data API v3 client for the hybrid catalog layer.
@@ -9,21 +32,23 @@ import { prisma } from "@/lib/prisma";
  * fills genre gaps where Jamendo's CC catalog is thin (e.g. Brazilian funk) and
  * provides a "Play on YouTube" fallback for any track via the IFrame Player API.
  *
- * Quota strategy (free tier ≈ 10,000 units/day, `search.list` = 100 units):
+ * Stack:
  *
- *   1. **DB-first resolution** — every song lookup checks
- *      `youtube_video_mappings` (song_key + artist_key → video_id) before ever
- *      calling the API. Once a song has been searched once, later lookups only
- *      need a 1-unit `videos.list` refresh (or nothing if the cache is fresh).
- *   2. **Batched metadata** — `videos.list` accepts up to 50 ids per call for a
- *      single unit; we always batch instead of looping single-id calls.
- *   3. **playlistItems seeding** — official / Topic "uploads" playlists are
- *      paged with `playlistItems.list` (1 unit per 50 items) to bulk-backfill a
- *      genre without burning search quota.
- *   4. **Search budget** — the daily `search.list` spend is capped (default 100
- *      searches/day) and tracked in `youtube_quota`; once exhausted, new
- *      lookups fall back to cached mappings / playlist rows instead of hitting
- *      the API.
+ *   Layer 1 — 10-project quota pool (`youtube-pool`). `search.list` (100 units)
+ *     draws from the 2 projects reserved for live search; `videos.list` /
+ *     `playlistItems.list` / `channels.list` (1 unit each) draw from the rest.
+ *     Usage is metered in Redis (`quota:{project}:{opType}:{date}`, 24h TTL) and
+ *     the router always picks the least-loaded project under its cap.
+ *
+ *   Layer 2 — Redis accelerator (`yt-redis`). `search:{query} → videoId` hot
+ *     cache (1-2h) and `neg:{query}` (30m "nothing good") skip both the DB and
+ *     the API. Counters + per-project ledger are best-effort; Redis down ⇒
+ *     transparent fall-through to Postgres.
+ *
+ *   Layer 3 — the `songs` store (`youtube-db`). Lean catalog (no thumbnail URLs,
+ *     no raw API dumps), in a dedicated Neon DB when `YOUTUBE_DATABASE_URL` is
+ *     set. Lookup ladder: Redis hot cache ⇒ Postgres trigram match ⇒ live
+ *     pooled search ⇒ negative cache. The DB is the only source of truth.
  *
  * All upstream errors are caught and logged server-side; callers get `null` /
  * empty arrays so the app degrades to Jamendo-only instead of breaking.
@@ -32,30 +57,46 @@ import { prisma } from "@/lib/prisma";
 export const YOUTUBE_BASE_URL = "https://www.googleapis.com/youtube/v3";
 
 /** `search.list` costs 100 units; `videos.list` / `playlistItems.list` cost 1. */
-const SEARCH_UNITS = 100;
-/** Default daily search budget (free tier ≈ 10,000 units/day). */
-const DEFAULT_DAILY_SEARCH_BUDGET = 100;
-/** Cached mappings are considered fresh for a week; `videos.list` refresh is cheap. */
-const MAPPING_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
+export const SEARCH_UNITS = 100;
+/** `videoCategoryId=10` is Music; strips non-music uploads at the query level. */
+export const VIDEO_CATEGORY_MUSIC = "10";
+
+/**
+ * Near-disqualifying title/branding signals (case-insensitive). Word-boundary
+ * safe so "mix" doesn't fire inside "remix"/"mixset" and "live" not on
+ * "deliver"/"alive". Bare "remix" is deliberately NOT blacklisted — for
+ * Brazilian funk the official remix is often the primary release.
+ */
+const TITLE_BLACKLIST_RE =
+  /\b(mix(es)?|mixtape|compilation|full album|one hour|1 hour|playlist|top \d+|melhores|remix pack|non-?stop|live|ao vivo|cover|karaoke|reaction|lyrics? video|type beat|instrumental only)\b/i;
+
+/** Sane track-length window in seconds (2:30–7:00), tuned for full-length
+ * official audio uploads. Kills Shorts (<1m), DJ sets, mixes and whole
+ * albums uploaded as a single video. */
+const DURATION_MAX = 7 * 60;
+const DURATION_MIN = 150;
+/** Brazilian funk often runs shorter (2:00–3:30); lower the floor to 1:30. */
+const DURATION_MIN_FUNK = 90;
+
+/** Duration bounds (seconds) for a track window, genre-aware. */
+export function durationBounds(subgenre?: string | null): { min: number; max: number } {
+  const min = /brazil/i.test(subgenre ?? "") ? DURATION_MIN_FUNK : DURATION_MIN;
+  return { min, max: DURATION_MAX };
+}
 
 const globalForYouTube = globalThis as unknown as {
   __phonqYouTubeSearches?: Map<string, number>;
-  __phonqYouTubeBudget?: number;
 };
 
-function ytSearches(): Map<string, number> {
-  if (!globalForYouTube.__phonqYouTubeSearches) {
-    globalForYouTube.__phonqYouTubeSearches = new Map();
-  }
-  return globalForYouTube.__phonqYouTubeSearches;
-}
-
-function dailySearchBudget(): number {
-  const fromEnv = Number(process.env.YOUTUBE_DAILY_SEARCH_BUDGET);
-  if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.floor(fromEnv);
-  const cached = globalForYouTube.__phonqYouTubeBudget;
-  if (cached && cached > 0) return cached;
-  return DEFAULT_DAILY_SEARCH_BUDGET;
+/** Cheap in-process per-request dedupe so a burst of lookups for the same song
+ * (e.g. a queue that references it twice) doesn't double-spend quota. */
+function markSearch(key: string): boolean {
+  const map = globalForYouTube.__phonqYouTubeSearches ?? (globalForYouTube.__phonqYouTubeSearches = new Map());
+  const now = Date.now();
+  const last = map.get(key) ?? 0;
+  if (now - last < 60 * 1000) return false;
+  map.set(key, now);
+  return true;
 }
 
 export interface YouTubeVideo {
@@ -70,163 +111,38 @@ export interface YouTubeVideo {
   subgenre: string | null;
   /** How the video was discovered: "search" | "playlist" | "channel". */
   source: string;
+  /** Wikipedia topic categories (e.g. "https://en.wikipedia.org/wiki/Music");
+   * a secondary music-confidence signal, only populated on live fetches. */
+  topicCategories?: string[];
 }
 
 export interface YouTubeQuotaStatus {
-  /** Units spent today (all endpoints). */
+  /** Units spent today (all endpoints, all projects). */
   unitsUsed: number;
   /** `search.list` calls made today. */
   searches: number;
   /** Remaining search budget for today (0 when exhausted). */
   searchesRemaining: number;
   budget: number;
+  /** Per-project breakdown (Redis counters, Postgres fallback). */
+  projects?: Array<{
+    id: number;
+    searchUsed: number;
+    playbackUsed: number;
+    dailyLimit: number;
+  }>;
+  /** True when at least one API key is configured. */
+  configured: boolean;
 }
 
 /* ------------------------------------------------------------------ */
-/* Prisma row → domain video                                           */
+/* Scoring helpers                                                     */
 /* ------------------------------------------------------------------ */
-
-function rowToVideo(
-  row: {
-    videoId: string;
-    title: string;
-    artistName: string;
-    duration: number;
-    thumbnail: string | null;
-    channelId: string | null;
-    channelTitle: string | null;
-    embeddable: boolean;
-    subgenre: string | null;
-    source: string;
-  },
-): YouTubeVideo {
-  return {
-    videoId: row.videoId,
-    title: row.title,
-    artistName: row.artistName,
-    duration: row.duration,
-    thumbnail: row.thumbnail,
-    channelId: row.channelId,
-    channelTitle: row.channelTitle,
-    embeddable: row.embeddable,
-    subgenre: row.subgenre,
-    source: row.source,
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Quota ledger                                                        */
-/* ------------------------------------------------------------------ */
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-async function recordQuota(units: number, searches = 0): Promise<void> {
-  try {
-    await prisma.youTubeQuota.upsert({
-      where: { date: today() },
-      update: { unitsUsed: { increment: units }, searches: { increment: searches } },
-      create: { date: today(), unitsUsed: units, searches },
-    });
-  } catch {
-    /* no database — quota ledger is best-effort only */
-  }
-}
-
-export async function getYouTubeQuotaStatus(): Promise<YouTubeQuotaStatus> {
-  const budget = dailySearchBudget();
-  try {
-    const row = await prisma.youTubeQuota.findUnique({ where: { date: today() } });
-    const searches = row?.searches ?? 0;
-    return {
-      unitsUsed: row?.unitsUsed ?? 0,
-      searches,
-      searchesRemaining: Math.max(0, budget - searches),
-      budget,
-    };
-  } catch {
-    return { unitsUsed: 0, searches: 0, searchesRemaining: budget, budget };
-  }
-}
-
-/**
- * Cheap in-memory per-request dedupe so a burst of lookups for the same song
- * (e.g. a queue that references it twice) doesn't double-spend search quota.
- */
-function markSearch(key: string): boolean {
-  const map = ytSearches();
-  const now = Date.now();
-  const last = map.get(key) ?? 0;
-  if (now - last < 60 * 1000) return false;
-  map.set(key, now);
-  return true;
-}
-
-/* ------------------------------------------------------------------ */
-/* Low-level fetch helpers                                             */
-/* ------------------------------------------------------------------ */
-
-interface GoogleApiError extends Error {
-  status?: number;
-  reason?: string;
-}
-
-async function ytGet<T>(path: string, params: Record<string, string>): Promise<T | null> {
-  const key = process.env.YOUTUBE_API_KEY;
-  if (!key) return null;
-  const url = new URL(`${YOUTUBE_BASE_URL}/${path}`);
-  url.searchParams.set("key", key);
-  for (const [k, v] of Object.entries(params)) {
-    if (v) url.searchParams.set(k, v);
-  }
-  let res: Response;
-  try {
-    res = await fetch(url.toString(), { cache: "no-store" });
-  } catch (err) {
-    console.error(`[youtube] network error for ${path}: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-  if (!res.ok) {
-    const err: GoogleApiError = new Error(`YouTube API returned ${res.status} for ${path}`);
-    err.status = res.status;
-    try {
-      const body = (await res.json()) as { error?: { message?: string; reason?: string } };
-      err.reason = body.error?.reason;
-      err.message = body.error?.message ?? err.message;
-    } catch {
-      /* non-JSON error body */
-    }
-    console.error(`[youtube] ${err.message} (${err.reason ?? "unknown reason"})`);
-    return null;
-  }
-  return (await res.json()) as T;
-}
-
-/* ------------------------------------------------------------------ */
-/* search.list                                                         */
-/* ------------------------------------------------------------------ */
-
-interface SearchItem {
-  id?: { videoId?: string };
-  snippet?: {
-    title?: string;
-    channelId?: string;
-    channelTitle?: string;
-    description?: string;
-    thumbnails?: { medium?: { url?: string } };
-  };
-}
-
-interface SearchResponse {
-  items?: SearchItem[];
-}
 
 /** Title → (songTitle, artistName). Handles "Artist - Song", "Song by Artist",
  * Topic-channel uploads ("Song" on "Artist - Topic"), "(Official Video)" etc. */
-function parseTitle(title: string, channelTitle: string | null): { songTitle: string; artistName: string } {
+export function parseTitle(title: string, channelTitle: string | null): { songTitle: string; artistName: string } {
   let t = title.trim();
-  // Strip common suffixes in parentheses.
   t = t
     .replace(/\s*\(official\s*(music\s*)?video.*?\)\s*$/i, "")
     .replace(/\s*\(official\s*audio.*?\)\s*$/i, "")
@@ -272,101 +188,248 @@ export function normalizeKey(name: string): string {
     .trim();
 }
 
-/** Score how well a search result matches the requested song+artist. */
-function scoreMatch(item: SearchItem, songTitle: string, artistName: string): number {
-  const title = (item.snippet?.title ?? "").toLowerCase();
-  const channel = (item.snippet?.channelTitle ?? "").toLowerCase();
-  const song = normalizeKey(songTitle);
-  const artist = normalizeKey(artistName);
-  let score = 0;
+/** True when a title carries a near-disqualifying signal from the blacklist
+ * (case-insensitive, word-boundary safe; "remix" deliberately excluded). */
+export function isBlacklistedTitle(title: string): boolean {
+  return TITLE_BLACKLIST_RE.test(title);
+}
 
-  if (song && title.includes(song)) score += 5;
-  if (artist && title.includes(artist)) score += 3;
-  if (artist && channel.includes(artist)) score += 2;
-  // Prefer auto-generated Topic channels and official/VEVO uploads.
-  if (channel.endsWith("- topic")) score += 3;
-  if (channel.includes("vevo")) score += 2;
-  if (channel.includes("official")) score += 1;
+/** Whether `duration` (seconds) sits inside the sane track-length window. */
+function durationInRange(duration: number, subgenre?: string | null): boolean {
+  if (duration <= 0) return false; // unknown duration (no videos.list hit) → no bonus
+  const { min, max } = durationBounds(subgenre);
+  return duration > min && duration < max;
+}
+
+/** Topic-channel check — the highest-signal filter. Auto-generated "{Artist} -
+ * Topic" channels contain only official audio (one video per track). */
+export function isTopicChannel(channelTitle: string | null | undefined): boolean {
+  return /- topic$/i.test(channelTitle ?? "");
+}
+
+/** Music-indicating Wikipedia topic category → weak positive confidence. */
+function hasMusicTopic(topicCategories?: string[]): boolean {
+  return (topicCategories ?? []).some((c) => /\bmusic\b/i.test(c));
+}
+
+/** Quality score for a cataloged song based on uploader signals, used later by
+ * the monthly prune. Topic channels (ground truth) and official/VEVO uploads are
+ * kept longest; generic uploads are pruned first if never played. */
+export function channelQuality(channelTitle: string | null | undefined): number {
+  if (isTopicChannel(channelTitle)) return 50;
+  if (/vevo/i.test(channelTitle ?? "")) return 45;
+  if (/official/i.test(channelTitle ?? "")) return 42;
+  return 25;
+}
+
+/** Score for a `search.list` winner from the layered pipeline. */
+function winnerQuality(score: number): number {
+  return Math.max(30, Math.min(100, Math.round(score)));
+}
+
+/* ------------------------------------------------------------------ */
+/* Per-project channel stats                                           */
+/* ------------------------------------------------------------------ */
+
+interface ChannelStats {
+  customUrl?: string;
+  country?: string;
+  subscriberCount: number;
+  viewCount: number;
+}
+
+interface ChannelItem {
+  id?: string;
+  snippet?: { customUrl?: string; country?: string };
+  statistics?: { subscriberCount?: string; viewCount?: string };
+}
+
+interface ChannelResponse {
+  items?: ChannelItem[];
+}
+
+async function channelStats(ids: string[]): Promise<Map<string, ChannelStats>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  const out = new Map<string, ChannelStats>();
+  if (unique.length === 0) return out;
+  for (let i = 0; i < unique.length; i += 50) {
+    const chunk = unique.slice(i, 50);
+    const data = await ytGet<ChannelResponse>("channels", { part: "snippet,statistics", id: chunk.join(",") }, "playback");
+    for (const item of data?.items ?? []) {
+      if (!item.id) continue;
+      const subscriberCount = Number(item.statistics?.subscriberCount) || 0;
+      const viewCount = Number(item.statistics?.viewCount) || 0;
+      out.set(item.id, {
+        customUrl: item.snippet?.customUrl,
+        country: item.snippet?.country,
+        subscriberCount,
+        viewCount,
+      });
+    }
+  }
+  return out;
+}
+
+/** +10 when the uploader looks like an official artist: real subscriber count
+ * with a sane subscriber→view ratio, ideally with branding handles set. */
+function channelReputationScore(channel: ChannelStats | null | undefined): number {
+  if (!channel) return 0;
+  const { subscriberCount, viewCount } = channel;
+  const saneRatio = viewCount === 0 || viewCount / Math.max(subscriberCount, 1) < 1000;
+  let score = 0;
+  if (subscriberCount >= 50 && saneRatio) score += 10;
+  if (channel.customUrl) score += 1;
+  if (channel.country) score += 1;
   return score;
 }
 
-/** Pick the best candidate for a song search, preferring high-scoring matches. */
-function bestSearchResult(items: SearchItem[], songTitle: string, artistName: string): SearchItem | null {
-  let best: SearchItem | null = null;
-  let bestScore = 0;
-  for (const item of items) {
-    if (!item.id?.videoId) continue;
-    const score = scoreMatch(item, songTitle, artistName);
-    if (score > bestScore) {
-      best = item;
-      bestScore = score;
-    }
-  }
-  return best;
+/* ------------------------------------------------------------------ */
+/* Candidate scoring                                                   */
+/* ------------------------------------------------------------------ */
+
+interface SearchItem {
+  id?: { videoId?: string };
+  snippet?: {
+    title?: string;
+    channelId?: string;
+    channelTitle?: string;
+    description?: string;
+    thumbnails?: { medium?: { url?: string } };
+  };
 }
 
-/** Run a real `search.list` call (100 units) for a song, cache the best video. */
-async function searchAndCache(
+interface SearchResponse {
+  items?: SearchItem[];
+}
+
+/** A search candidate with its layered-pipeline score attached. */
+interface RankedVideo extends YouTubeVideo {
+  score: number;
+}
+
+/** Rank every search candidate through the layered scoring pipeline:
+ *
+ *    Channel is "- Topic"                  +50   (ground-truth signal)
+ *    Title matches blacklist regex         -100  (near-disqualifying)
+ *    Title contains the artist name        +15
+ *    Duration inside the sane range        +20
+ *    Has music topicCategories             +10
+ *    Channel sub/view ratio looks official  +10
+ *
+ * Candidates that can't plausibly be the requested song (no title/channel
+ * match for the artist or song) are dropped first; winners are ranked by
+ * score, ties broken by VEVO/official branding and a thumbnail.
+ */
+function rankCandidates(
+  items: SearchItem[],
+  metas: YouTubeVideo[],
+  channels: Map<string, ChannelStats>,
   songTitle: string,
   artistName: string,
   subgenre?: string,
-): Promise<YouTubeVideo | null> {
-  const key = normalizeKey(songTitle);
+): RankedVideo[] {
+  const song = normalizeKey(songTitle);
   const artist = normalizeKey(artistName);
+  const metaByVideoId = new Map(metas.map((m) => [m.videoId, m]));
+  const ranked: RankedVideo[] = [];
 
-  // Only one live search per song within a minute (per-process) to avoid
-  // double-spending on bursty request patterns.
-  const dedupeKey = `${key}|${artist}`;
-  if (!markSearch(dedupeKey)) return null;
+  for (const item of items) {
+    const videoId = item.id?.videoId;
+    if (!videoId) continue;
+    const meta = metaByVideoId.get(videoId);
+    if (!meta || !meta.embeddable) continue;
 
-  const queries = [
-    artistName && songTitle ? `${artistName} ${songTitle}` : songTitle,
-    songTitle,
-  ].filter(Boolean);
-  const query = queries[0] ?? "";
+    const title = meta.title || item.snippet?.title || "";
+    const channelTitle = meta.channelTitle || item.snippet?.channelTitle || "";
+    const nTitle = normalizeKey(title);
+    const nChannel = normalizeKey(channelTitle);
 
-  const data = await ytGet<SearchResponse>("search", {
-    part: "snippet",
-    type: "video",
-    q: query,
-    maxResults: "10",
-    safeSearch: "none",
-    relevanceLanguage: "en",
-  });
-  // Only charge quota when the API actually responded — network failures and
-  // missing keys never reach YouTube, so they shouldn't burn the search budget.
-  if (data) await recordQuota(SEARCH_UNITS, 1);
-  if (!data?.items) return null;
+    // Relevance floor: must plausibly reference the requested song or artist.
+    if (!(song && nTitle.includes(song)) && !(artist && (nTitle.includes(artist) || nChannel.includes(artist)))) {
+      continue;
+    }
 
-  const best = bestSearchResult(data.items, songTitle, artistName);
-  if (!best?.id?.videoId) return null;
+    let score = 0;
+    if (isTopicChannel(channelTitle)) score += 50;
+    if (isBlacklistedTitle(title)) score -= 100;
+    if (artist && nTitle.includes(artist)) score += 15;
+    if (durationInRange(meta.duration, subgenre)) score += 20;
+    if (hasMusicTopic(meta.topicCategories)) score += 10;
+    score += channelReputationScore(channels.get(meta.channelId ?? ""));
 
-  const video: YouTubeVideo = {
-    videoId: best.id.videoId,
-    title: best.snippet?.title ?? songTitle,
-    artistName: parseTitle(best.snippet?.title ?? "", best.snippet?.channelTitle ?? null).artistName || artistName,
-    duration: 0, // filled by the 1-unit videos.list refresh below
-    thumbnail: best.snippet?.thumbnails?.medium?.url ?? null,
-    channelId: best.snippet?.channelId ?? null,
-    channelTitle: best.snippet?.channelTitle ?? null,
-    embeddable: true,
-    subgenre: subgenre ?? null,
-    source: "search",
-  };
+    // Stability tiebreakers.
+    if (/vevo/i.test(channelTitle)) score += 2;
+    if (/official/i.test(channelTitle)) score += 1;
+    if (item.snippet?.thumbnails?.medium?.url) score += 1;
 
-  // Refresh duration + embed status with a 1-unit videos.list call and persist.
-  const refreshed = await videosList([video.videoId]);
-  const fresh = refreshed[0];
-  if (fresh) {
-    video.duration = fresh.duration;
-    video.embeddable = fresh.embeddable;
-    video.thumbnail = fresh.thumbnail ?? video.thumbnail;
-    video.channelId = fresh.channelId ?? video.channelId;
-    video.channelTitle = fresh.channelTitle ?? video.channelTitle;
+    ranked.push({ ...meta, score });
   }
 
-  await upsertVideo(video, songTitle, artistName, query);
-  return video;
+  ranked.sort((a, b) => b.score - a.score);
+  return ranked;
+}
+
+/* ------------------------------------------------------------------ */
+/* Low-level fetch helpers                                             */
+/* ------------------------------------------------------------------ */
+
+interface GoogleApiError extends Error {
+  status?: number;
+  reason?: string;
+}
+
+/**
+ * Fetch a YouTube Data API page, drawing the API key from the least-loaded
+ * project in the pool for `op`. Records quota usage + an `api_call_log` row on a
+ * successful call. Returns null when the pool is exhausted, the key is missing,
+ * the request errors, or YouTube answers 403 (quotaExceeded / suspended project).
+ */
+async function ytGet<T>(path: string, params: Record<string, string>, op: OpType): Promise<T | null> {
+  const project = await getAvailableProject(op);
+  if (!project) {
+    if (op === "search") {
+      console.warn(`[youtube] quota pool exhausted for ${op} — skipping ${path}`);
+    }
+    return null;
+  }
+
+  const url = new URL(`${YOUTUBE_BASE_URL}/${path}`);
+  url.searchParams.set("key", project.apiKey);
+  for (const [k, v] of Object.entries(params)) {
+    if (v) url.searchParams.set(k, v);
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), { cache: "no-store" });
+  } catch (err) {
+    console.error(`[youtube] network error for ${path}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+  if (!res.ok) {
+    const err: GoogleApiError = new Error(`YouTube API returned ${res.status} for ${path}`);
+    err.status = res.status;
+    try {
+      const body = (await res.json()) as { error?: { message?: string; reason?: string } };
+      err.reason = body.error?.reason;
+      err.message = body.error?.message ?? err.message;
+    } catch {
+      /* non-JSON error body */
+    }
+    if (res.status === 403) {
+      // Project likely suspended or quotaExceeded — log and skip; the router's
+      // counter already reflects today's burn, and future calls will round-robin
+      // to another project automatically.
+      console.warn(`[youtube] project ${project.id} rejected (${err.reason ?? "quotaExceeded"}): ${err.message}`);
+    } else {
+      console.error(`[youtube] ${err.message} (${err.reason ?? "unknown reason"})`);
+    }
+    return null;
+  }
+
+  const data = (await res.json()) as T;
+  await recordUsage(project.id, op, UNIT_COST[op], endpointFor(path));
+  return data;
 }
 
 /* ------------------------------------------------------------------ */
@@ -377,6 +440,7 @@ interface VideoItem {
   id?: string;
   contentDetails?: { duration?: string };
   status?: { embeddable?: boolean; uploadStatus?: string };
+  topicDetails?: { topicCategories?: string[] };
   snippet?: {
     title?: string;
     channelId?: string;
@@ -410,6 +474,7 @@ function videoItemToVideo(item: VideoItem): YouTubeVideo | null {
     embeddable: item.status?.embeddable ?? true,
     subgenre: null,
     source: "search",
+    topicCategories: item.topicDetails?.topicCategories,
   };
 }
 
@@ -419,12 +484,8 @@ async function videosList(ids: string[]): Promise<YouTubeVideo[]> {
   if (unique.length === 0) return [];
   const out: YouTubeVideo[] = [];
   for (let i = 0; i < unique.length; i += 50) {
-    const chunk = unique.slice(i, i + 50);
-    const data = await ytGet<VideosResponse>("videos", {
-      part: "snippet,contentDetails,status",
-      id: chunk.join(","),
-    });
-    if (data) await recordQuota(1);
+    const chunk = unique.slice(i, 50);
+    const data = await ytGet<VideosResponse>("videos", { part: "snippet,contentDetails,status,topicDetails", id: chunk.join(",") }, "playback");
     if (!data?.items) continue;
     for (const item of data.items) {
       const video = videoItemToVideo(item);
@@ -435,47 +496,112 @@ async function videosList(ids: string[]): Promise<YouTubeVideo[]> {
 }
 
 /* ------------------------------------------------------------------ */
-/* Persistence helpers                                                 */
+/* Persistence (Layer 3: the `songs` catalog store)                    */
 /* ------------------------------------------------------------------ */
 
-async function upsertVideo(
-  video: YouTubeVideo,
-  songTitle?: string,
-  artistName?: string,
-  query?: string,
-): Promise<void> {
-  try {
-    const data = {
-      title: video.title,
-      artistName: video.artistName,
-      duration: video.duration,
-      thumbnail: video.thumbnail,
-      channelId: video.channelId,
-      channelTitle: video.channelTitle,
-      embeddable: video.embeddable,
-      subgenre: video.subgenre,
-      source: video.source,
-    };
-    await prisma.youTubeVideo.upsert({
-      where: { videoId: video.videoId },
-      update: data,
-      create: { videoId: video.videoId, ...data },
-    });
-    if (songTitle && artistName) {
-      await prisma.youTubeVideoMapping.upsert({
-        where: { songKey_artistKey: { songKey: normalizeKey(songTitle), artistKey: normalizeKey(artistName) } },
-        update: { videoId: video.videoId, query: query ?? `${artistName} ${songTitle}` },
-        create: {
-          videoId: video.videoId,
-          songKey: normalizeKey(songTitle),
-          artistKey: normalizeKey(artistName),
-          query: query ?? `${artistName} ${songTitle}`,
-        },
-      });
-    }
-  } catch {
-    /* no database — cache writes are best-effort */
-  }
+function toSongInput(video: YouTubeVideo, qualityScore: number): SongInput {
+  return {
+    videoId: video.videoId,
+    title: video.title,
+    artist: video.artistName,
+    channelId: video.channelId,
+    channelTitle: video.channelTitle,
+    durationSec: video.duration,
+    genreTag: video.subgenre,
+    qualityScore,
+    embedStatus: video.embeddable,
+    source: video.source,
+  };
+}
+
+/** Persist a resolved/seeded video into the `songs` catalog (best-effort). */
+async function persistSong(video: YouTubeVideo, qualityScore: number): Promise<void> {
+  await upsertSong(toSongInput(video, qualityScore));
+}
+
+/* ------------------------------------------------------------------ */
+/* search.list + ranking                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Run a real `search.list` call (100 units) for a song, rank the candidates
+ * via the layered scoring pipeline (videoCategoryId=10 already applied at the
+ * query), and cache the winner. The caller is responsible for the per-process
+ * 60s dedupe guard (`markSearch`) so a burst doesn't double-spend.
+ */
+async function searchAndCache(
+  songTitle: string,
+  artistName: string,
+  subgenre?: string,
+): Promise<YouTubeVideo | null> {
+  const artist = normalizeKey(artistName);
+  const queries = [
+    artistName && songTitle ? `${artistName} ${songTitle}` : songTitle,
+    songTitle,
+  ].filter(Boolean);
+  const query = queries[0] ?? "";
+
+  const data = await ytGet<SearchResponse>(
+    "search",
+    {
+      part: "snippet",
+      type: "video",
+      q: query,
+      maxResults: "25",
+      safeSearch: "none",
+      relevanceLanguage: "en",
+      videoCategoryId: VIDEO_CATEGORY_MUSIC,
+    },
+    "search",
+  );
+  if (!data?.items) return null;
+
+  // Fetch fresh metadata (duration, embed status, topic categories) for every
+  // candidate in one 1-unit batched videos.list call, then score them all.
+  const items = data.items;
+  const ids = items.map((i) => i.id?.videoId).filter((x): x is string => Boolean(x));
+  const metas = await videosList(ids);
+
+  // Degrade gracefully: if videos.list failed for some/all candidates, synthesize
+  // snippet-only metadata so ranking still runs (fewer signals, same winner logic).
+  const metaByVideoId = new Map(metas.map((m) => [m.videoId, m]));
+  const allMetas: YouTubeVideo[] = items.flatMap((item) => {
+    const videoId = item.id?.videoId;
+    if (!videoId) return [];
+    const fresh = metaByVideoId.get(videoId);
+    if (fresh) return [fresh];
+    return [{
+      videoId,
+      title: item.snippet?.title ?? "",
+      artistName: item.snippet?.channelTitle ?? "",
+      duration: 0,
+      thumbnail: item.snippet?.thumbnails?.medium?.url ?? null,
+      channelId: item.snippet?.channelId ?? null,
+      channelTitle: item.snippet?.channelTitle ?? null,
+      embeddable: true,
+      subgenre: null,
+      source: "search",
+    }];
+  });
+  if (allMetas.length === 0) return null;
+
+  const channels = await channelStats([...new Set(allMetas.map((m) => m.channelId).filter((x): x is string => Boolean(x)))]);
+  const ranked = rankCandidates(items, allMetas, channels, songTitle, artistName, subgenre);
+  const best = ranked[0];
+  if (!best) return null;
+
+  const video: YouTubeVideo = {
+    ...best,
+    // videos.list reports the raw channel title as artist (e.g. "Artist -
+    // Topic"); prefer the parsed artist from the real video title.
+    artistName: parseTitle(best.title, best.channelTitle).artistName || artistName,
+    subgenre: subgenre ?? null,
+    source: "search",
+  };
+
+  await persistSong(video, winnerQuality(best.score));
+  video.thumbnail = thumbnailFor(video.videoId);
+  return video;
 }
 
 /* ------------------------------------------------------------------ */
@@ -485,10 +611,16 @@ async function upsertVideo(
 /**
  * Resolve a song (title + artist) to a YouTube video.
  *
- * DB-first: a cached mapping hits without any API call. On a cache miss a
- * `search.list` is spent (subject to the daily search budget) and the result is
- * stored permanently so the next lookup is free. Returns null when the song is
- * unresolvable, the API key is missing, or the search budget is exhausted.
+ * Lookup ladder (Redis → Postgres trigram → pooled live search):
+ *   1. Redis `search:{query}` hot cache → video id, backed by the `songs` row.
+ *   2. Postgres trigram match on `songs` (artist/title `gin_trgm`).
+ *   3. `search.list` via `getAvailableProject('search')` — 100 units, budget
+ *      gated, winner persisted so the next lookup is a free cache read.
+ *
+ * A negative cache (`neg:`) holds known-bad queries for 30 min so a missing
+ * song is never re-searched. Pool exhaustion falls through to the Postgres
+ * fuzzy match (and the query is effectively queued for the next nightly seed);
+ * the function never throws.
  */
 export async function resolveSongVideo(
   songTitle: string,
@@ -496,71 +628,62 @@ export async function resolveSongVideo(
   subgenre?: string,
 ): Promise<YouTubeVideo | null> {
   if (!songTitle.trim()) return null;
+  if (!hasProjects()) return null;
+
   const songKey = normalizeKey(songTitle);
   const artistKey = normalizeKey(artistName);
+  const cacheKey = `search:${artistKey ? `${artistKey}|${songKey}` : songKey}`;
 
-  if (!process.env.YOUTUBE_API_KEY) return null;
+  // 0. Negative cache — avoid re-searching known-bad queries for 30 min.
+  if (await ytRedis.cacheGet(`neg:${cacheKey}`)) return null;
 
-  // 1. DB-first lookup — no API cost on a hit.
-  try {
-    const mapping = await prisma.youTubeVideoMapping.findUnique({
-      where: { songKey_artistKey: { songKey, artistKey } },
-      include: { video: true },
-    });
-    if (mapping) {
-      const video = rowToVideo(mapping.video);
-      if (!video.embeddable) return null;
-      // Refresh cheap metadata once a week (1-unit videos.list call).
-      const stale = Date.now() - new Date(mapping.video.updatedAt).getTime() > MAPPING_FRESH_MS;
-      if (stale) {
-        const fresh = await videosList([video.videoId]);
-        const updated = fresh[0];
-        if (updated) {
-          const merged: YouTubeVideo = {
-            ...video,
-            ...updated,
-            // `videos.list` returns the channel title as artistName (e.g. "Artist -
-            // Topic"); keep the parsed artist from the stored mapping instead.
-            artistName: video.artistName,
-            subgenre: video.subgenre,
-            source: video.source,
-          };
-          await upsertVideo(merged, songTitle, artistName, mapping.query);
-          return merged;
-        }
-      }
-      return video;
+  // 1. Redis hot cache (1-2h) → video id → DB-backed song.
+  const cachedId = await ytRedis.cacheGet<string>(cacheKey);
+  if (cachedId) {
+    const song = await findSongByVideoId(cachedId);
+    if (song?.embeddable) {
+      void touchLastPlayed(song.videoId);
+      return song;
     }
-  } catch {
-    /* DB unavailable — fall through to a live search */
+    // Cached id no longer in the catalog — fall through to fuzzy + live.
   }
 
-  // 2. Cache miss — check the daily search budget before spending 100 units.
-  try {
-    const quota = await prisma.youTubeQuota.findUnique({ where: { date: today() } });
-    const searches = quota?.searches ?? 0;
-    if (searches >= dailySearchBudget()) {
-      console.warn(`[youtube] daily search budget (${dailySearchBudget()}) exhausted — skipping "${songTitle}"`);
-      return null;
-    }
-  } catch {
-    /* no database — allow the search; the memory dedupe still guards bursts */
+  // 2. Postgres trigram fuzzy match (0 quota cost).
+  const fuzzy = await searchSongFuzzy(songKey, artistKey, 1);
+  if (fuzzy && fuzzy.length && fuzzy[0].embeddable) {
+    const song = fuzzy[0];
+    void ytRedis.cacheSet(cacheKey, song.videoId, 2 * 3600);
+    void touchLastPlayed(song.videoId);
+    return song;
   }
 
-  return searchAndCache(songTitle, artistName, subgenre);
+  // 3. Live search via the pool (per-process dedupe guards bursts).
+  const dedupeKey = `${songKey}|${artistKey}`;
+  if (!markSearch(dedupeKey)) return null;
+
+  const video = await searchAndCache(songTitle, artistName, subgenre);
+  if (video) {
+    void ytRedis.cacheSet(cacheKey, video.videoId, 2 * 3600);
+    void touchLastPlayed(video.videoId);
+    return video;
+  }
+
+  // 4. Nothing good — negative-cache so this query isn't retried for 30 min.
+  void ytRedis.cacheSet(`neg:${cacheKey}`, "1", 30 * 60);
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
 /* Runtime genre-gap fill (on-demand, budget-gated)                    */
 /* ------------------------------------------------------------------ */
 
-/** Per-process throttle so a burst of page renders doesn't re-search the
- * same genre within a day, and the winners are persisted for free reads. */
+/** Per-process throttle so a burst of page renders doesn't re-search the same
+ * genre within a day, and the winners are persisted for free reads. */
 const genreFillAt: Map<string, number> = new Map();
 const GENRE_FILL_DEDUPE_MS = 24 * 60 * 60 * 1000;
 
 /** Opt out of live searches with `YOUTUBE_RUNTIME_FILL=0`; on by default. */
-function runtimeFillEnabled(): boolean {
+export function runtimeFillEnabled(): boolean {
   const value = (process.env.YOUTUBE_RUNTIME_FILL ?? "1").toLowerCase();
   return !["0", "false", "off", "no"].includes(value);
 }
@@ -593,49 +716,40 @@ function genreCandidateScore(item: SearchItem): number {
 }
 
 /**
- * Search YouTube live for a subgenre's tracks (e.g. "Brazilian Funk phonk")
- * to top up a genre that Jamendo's CC catalog can't fill — no manual seeding
- * required. This is the runtime twin of `seedFromPlaylist` +
- * `fetchCachedSubgenreVideos`: each genre is searched at most once per day
- * (per process), the spend is capped by the rolling daily search budget, and
- * the winners are persisted so later page loads are free DB reads.
- *
- * Lyrics videos and non-embeddable/short/long items are dropped; the best
- * candidates are returned as `YouTubeVideo`s tagged with the subgenre.
+ * Search YouTube live for a subgenre's tracks (e.g. "Brazilian Funk phonk") to
+ * top up a genre that Jamendo's CC catalog can't fill — no manual seeding
+ * required. Each genre is searched at most once per day (per process) and the
+ * spend is capped by the rolling quota pool; winners are persisted so later
+ * page loads are free DB reads. Lyrics videos and non-embeddable/short/long
+ * items are dropped; the best candidates return as `YouTubeVideo`s tagged with
+ * the subgenre.
  */
 export async function fetchGenreVideos(
   subgenre: string,
   queries: string[],
   limit = 12,
 ): Promise<YouTubeVideo[]> {
-  if (!process.env.YOUTUBE_API_KEY || !runtimeFillEnabled() || limit <= 0) return [];
+  if (!hasProjects() || !runtimeFillEnabled() || limit <= 0) return [];
   if (queries.length === 0 || !markGenreFill(subgenre)) return [];
-
-  // Respect the rolling daily search budget before spending 100 units.
-  try {
-    const quota = await prisma.youTubeQuota.findUnique({ where: { date: today() } });
-    if ((quota?.searches ?? 0) >= dailySearchBudget()) {
-      console.warn(`[youtube] daily search budget (${dailySearchBudget()}) exhausted — skipping genre fill "${subgenre}"`);
-      return [];
-    }
-  } catch {
-    /* no database — the per-process throttle still guards bursts */
-  }
 
   const found: YouTubeVideo[] = [];
   const seenIds = new Set<string>();
 
   for (const query of queries.slice(0, 3)) {
     if (found.length >= limit) break;
-    const data = await ytGet<SearchResponse>("search", {
-      part: "snippet",
-      type: "video",
-      q: query,
-      maxResults: "25",
-      safeSearch: "none",
-      relevanceLanguage: "en",
-    });
-    if (data) await recordQuota(SEARCH_UNITS, 1);
+    const data = await ytGet<SearchResponse>(
+      "search",
+      {
+        part: "snippet",
+        type: "video",
+        q: query,
+        maxResults: "25",
+        safeSearch: "none",
+        relevanceLanguage: "en",
+        videoCategoryId: VIDEO_CATEGORY_MUSIC,
+      },
+      "search",
+    );
     if (!data?.items) continue;
 
     const candidates = data.items
@@ -644,20 +758,22 @@ export async function fetchGenreVideos(
         const title = item.snippet?.title?.trim() ?? "";
         if (!title) return false;
         if (isLyricResult(title, item.snippet?.channelTitle)) return false;
+        if (isBlacklistedTitle(title)) return false; // mixes, compilations, "ao vivo"…
         return true;
       })
       .sort((a, b) => genreCandidateScore(b) - genreCandidateScore(a))
       .slice(0, Math.max(limit * 2, 12));
 
-    const ids = candidates.map((item) => item.id!.videoId!);
-    const metas = await videosList(ids);
+    const buckets = durationBounds(subgenre);
+    const metas = await videosList(candidates.map((item) => item.id!.videoId!));
     for (const meta of metas) {
       if (!meta.embeddable) continue;
-      if (meta.duration < 45 || meta.duration > 900) continue;
+      if (meta.duration <= buckets.min || meta.duration >= buckets.max) continue;
       if (seenIds.has(meta.videoId)) continue;
       seenIds.add(meta.videoId);
       const track: YouTubeVideo = {
         ...meta,
+        thumbnail: thumbnailFor(meta.videoId),
         // videos.list reports the raw channel title as artist; prefer a parsed
         // "Artist" from the actual video title (handles "- Topic" channels).
         artistName: parseTitle(meta.title, meta.channelTitle).artistName || meta.artistName,
@@ -665,7 +781,7 @@ export async function fetchGenreVideos(
         source: "search",
       };
       found.push(track);
-      await upsertVideo(track);
+      await persistSong(track, channelQuality(track.channelTitle));
       if (found.length >= limit) break;
     }
   }
@@ -689,35 +805,27 @@ function markQueryFill(key: string): boolean {
  * Search YouTube live for an arbitrary user-provided query (e.g. "Brodyaga
  * Funk") that Jamendo's CC catalog can't match. Budget-gated like the genre
  * fill: at most once per day per query (per process), capped by the rolling
- * daily search budget, and the winners are persisted so later lookups are free
- * DB reads. Results are ranked by the same quality heuristic as genre fill
- * (Topic/official uploads first), with lyrics and non-embeddable/short/long
- * items dropped.
+ * quota pool, winners persisted so later lookups are free DB reads. Results are
+ * ranked by the same quality heuristic as genre fill (Topic/official uploads
+ * first), with lyrics and non-embeddable/short/long items dropped.
  */
 export async function fetchQueryVideos(query: string, limit = 12, subgenre?: string): Promise<YouTubeVideo[]> {
   const q = query.trim();
-  if (!process.env.YOUTUBE_API_KEY || !runtimeFillEnabled() || limit <= 0 || !q) return [];
+  if (!hasProjects() || !runtimeFillEnabled() || limit <= 0 || !q) return [];
   if (!markQueryFill(q.toLowerCase())) return [];
 
-  // Respect the rolling daily search budget before spending 100 units.
-  try {
-    const quota = await prisma.youTubeQuota.findUnique({ where: { date: today() } });
-    if ((quota?.searches ?? 0) >= dailySearchBudget()) {
-      console.warn(`[youtube] daily search budget (${dailySearchBudget()}) exhausted — skipping search query "${q}"`);
-      return [];
-    }
-  } catch {
-    /* no database — the per-process throttle still guards bursts */
-  }
-
-  const data = await ytGet<SearchResponse>("search", {
-    part: "snippet",
-    type: "video",
-    q,
-    maxResults: "25",
-    safeSearch: "none",
-  });
-  if (data) await recordQuota(SEARCH_UNITS, 1);
+  const data = await ytGet<SearchResponse>(
+    "search",
+    {
+      part: "snippet",
+      type: "video",
+      q,
+      maxResults: "25",
+      safeSearch: "none",
+      videoCategoryId: VIDEO_CATEGORY_MUSIC,
+    },
+    "search",
+  );
   if (!data?.items) return [];
 
   const seenIds = new Set<string>();
@@ -727,29 +835,30 @@ export async function fetchQueryVideos(query: string, limit = 12, subgenre?: str
       const title = item.snippet?.title?.trim() ?? "";
       if (!title) return false;
       if (isLyricResult(title, item.snippet?.channelTitle)) return false;
+      if (isBlacklistedTitle(title)) return false; // mixes, compilations, "ao vivo"…
       return true;
     })
     .sort((a, b) => genreCandidateScore(b) - genreCandidateScore(a))
     .slice(0, Math.max(limit * 2, 12));
 
+  const buckets = durationBounds(subgenre);
   const metas = await videosList(candidates.map((item) => item.id!.videoId!));
 
   const found: YouTubeVideo[] = [];
   for (const meta of metas) {
     if (!meta.embeddable) continue;
-    if (meta.duration < 45 || meta.duration > 900) continue;
+    if (meta.duration <= buckets.min || meta.duration >= buckets.max) continue;
     if (seenIds.has(meta.videoId)) continue;
     seenIds.add(meta.videoId);
     const track: YouTubeVideo = {
       ...meta,
-      // `videos.list` reports the channel title as artist; prefer a parsed
-      // "Artist" from the real video title (handles "- Topic" channels).
+      thumbnail: thumbnailFor(meta.videoId),
       artistName: parseTitle(meta.title, meta.channelTitle).artistName || meta.artistName,
       subgenre: subgenre ?? null,
       source: "search",
     };
     found.push(track);
-    await upsertVideo(track);
+    await persistSong(track, channelQuality(track.channelTitle));
     if (found.length >= limit) break;
   }
 
@@ -757,16 +866,17 @@ export async function fetchQueryVideos(query: string, limit = 12, subgenre?: str
 }
 
 /**
- * Backfill a genre by paging an uploads/curated playlist with
- * `playlistItems.list` (1 unit per 50 items). Bulk-seeds the mapping table for
- * hundreds of tracks without burning search quota.
+ * Backfill a genre by paging an uploads/curated playlist with `playlistItems.list`
+ * (1 unit per 50 items) instead of `search.list` (100 units each). Bulk-seeds
+ * the `songs` catalog for a genre without burning the search budget — the cheap
+ * ops draw from the playback slice of the quota pool.
  */
 export async function seedFromPlaylist(
   playlistId: string,
   subgenre: string,
   maxItems = 200,
 ): Promise<YouTubeVideo[]> {
-  if (!process.env.YOUTUBE_API_KEY) return [];
+  if (!hasProjects()) return [];
   const found: YouTubeVideo[] = [];
   let pageToken: string | undefined;
   let count = 0;
@@ -778,13 +888,11 @@ export async function seedFromPlaylist(
 
   do {
     if (count >= maxItems) break;
-    const data = await ytGet<PlaylistResponse>("playlistItems", {
-      part: "snippet",
-      playlistId,
-      maxResults: "50",
-      ...(pageToken ? { pageToken } : {}),
-    });
-    if (data) await recordQuota(1);
+    const data = await ytGet<PlaylistResponse>(
+      "playlistItems",
+      { part: "snippet", playlistId, maxResults: "50", ...(pageToken ? { pageToken } : {}) },
+      "playback",
+    );
     if (!data) break;
     pageToken = data.nextPageToken;
     const ids: string[] = [];
@@ -795,19 +903,18 @@ export async function seedFromPlaylist(
     count += ids.length;
     // Fetch fresh metadata in batches of 50 (1 unit each).
     for (let i = 0; i < ids.length; i += 50) {
-      const chunk = ids.slice(i, i + 50);
+      const chunk = ids.slice(i, 50);
       const metas = await videosList(chunk);
       for (const video of metas) {
         const track: YouTubeVideo = {
           ...video,
-          // videos.list returns the raw channel title; parse the real artist from
-          // the video title (handles "Artist - Topic" channels and "Artist - Song").
+          thumbnail: thumbnailFor(video.videoId),
           artistName: parseTitle(video.title, video.channelTitle).artistName || video.artistName,
           subgenre,
           source: "playlist",
         };
         found.push(track);
-        await upsertVideo(track);
+        await persistSong(track, channelQuality(track.channelTitle));
       }
     }
   } while (pageToken);
@@ -815,59 +922,65 @@ export async function seedFromPlaylist(
   return found;
 }
 
-/** Cached YouTube videos for a subgenre (from playlist seeding), for genre-gap fills. */
+/* ------------------------------------------------------------------ */
+/* Catalog reads (Layer 3, Postgres — 0 quota)                        */
+/* ------------------------------------------------------------------ */
+
+/** Cached YouTube songs for a subgenre (from playlist seeding / live fill). */
 export async function fetchCachedSubgenreVideos(subgenre: string, limit = 24): Promise<YouTubeVideo[]> {
-  try {
-    const rows = await prisma.youTubeVideo.findMany({
-      where: { subgenre, embeddable: true },
-      orderBy: { createdAt: "desc" },
-      take: Math.max(limit, 50),
-    });
-    return rows.map(rowToVideo);
-  } catch {
-    return [];
-  }
+  return findSongsByGenre(subgenre, limit);
 }
 
-/** Cached YouTube videos not tied to a subgenre — query-discovered during search
- * fill (e.g. "Brodyaga Funk") and generic live rescues. Used to top up generic
- * pages (home strips, trending, fresh drops) with free DB reads. */
+/** Cached YouTube songs not tied to a subgenre — query-discovered during search
+ * fill and generic rescues. Used to top up generic pages with free DB reads. */
 export async function fetchCachedGeneralVideos(limit = 12): Promise<YouTubeVideo[]> {
-  try {
-    const rows = await prisma.youTubeVideo.findMany({
-      where: { embeddable: true, subgenre: null },
-      orderBy: { createdAt: "desc" },
-      take: Math.max(limit * 2, 20),
-    });
-    return rows.map(rowToVideo);
-  } catch {
-    return [];
-  }
+  return findGeneralSongs(limit);
 }
 
-/** All cached YouTube videos, used by the admin/seeding UI and quota page. */
+/** All cached YouTube songs, used by the admin/seeding UI and quota page. */
 export async function fetchAllCachedVideos(limit = 100): Promise<YouTubeVideo[]> {
-  try {
-    const rows = await prisma.youTubeVideo.findMany({
-      orderBy: { createdAt: "desc" },
-      take: limit,
-    });
-    return rows.map(rowToVideo);
-  } catch {
-    return [];
-  }
+  return findAllSongs(limit);
 }
 
-/** Cached YouTube videos by their raw video ids (no API calls — DB only). */
+/** Cached YouTube songs by their raw video ids (no API calls — DB only). */
 export async function fetchVideosByIds(videoIds: string[]): Promise<YouTubeVideo[]> {
-  const unique = [...new Set(videoIds.filter(Boolean))];
-  if (unique.length === 0) return [];
+  return findSongsByIds(videoIds);
+}
+
+/* ------------------------------------------------------------------ */
+/* Quota status (pooled, cross-project)                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Aggregate daily quota status across the whole project pool. Uses the Redis
+ * counters when available, and falls back to summing today's `api_call_log`
+ * rows from Postgres when Redis is down — so the health surface never blanks
+ * out just because the cache layer is unavailable.
+ */
+export async function getYouTubeQuotaStatus(): Promise<YouTubeQuotaStatus> {
+  const budget = dailySearchBudget();
   try {
-    const rows = await prisma.youTubeVideo.findMany({
-      where: { videoId: { in: unique } },
-    });
-    return rows.map(rowToVideo);
+    const pool = await getQuotaStatus();
+    const searches = pool.searches;
+    return {
+      unitsUsed: pool.unitsUsed,
+      searches,
+      searchesRemaining: Math.max(0, budget - searches),
+      budget,
+      projects: pool.projects,
+      configured: pool.configured,
+    };
   } catch {
-    return [];
+    // Redis + pool unavailable — fall back to the Postgres call log.
+    const unitsUsed = await unitsUsedToday();
+    const searches = Math.round(unitsUsed / UNIT_COST.search);
+    return {
+      unitsUsed,
+      searches,
+      searchesRemaining: Math.max(0, budget - searches),
+      budget,
+      projects: [],
+      configured: false,
+    };
   }
 }

@@ -7,6 +7,7 @@ import Image from "next/image";
 import { Download, Music2, Pause, Play, Plus, X } from "lucide-react";
 
 import { usePlayer } from "@/components/player/player-context";
+import { ArtistLink } from "@/components/track/artist-link";
 import { LikeButton } from "@/components/track/like-button";
 import { cn, formatDuration } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
@@ -39,7 +40,9 @@ export function TrackRow({
   const isNowPlaying = isCurrent && isPlaying;
 
   function handlePlay() {
-    if (!track.audioUrl) return;
+    // YouTube tracks have no direct stream URL — they play through the IFrame
+    // engine via `videoId`, so don't gate playback on `audioUrl`.
+    if (!track.audioUrl && track.source !== "youtube") return;
     if (isCurrent) {
       togglePlay();
       return;
@@ -94,7 +97,7 @@ export function TrackRow({
 
       <div className="min-w-0 flex-1">
         <p className={cn("truncate text-sm font-medium", isCurrent && "text-primary")}>{track.name}</p>
-        <p className="truncate text-xs text-muted-foreground">{track.artistName}</p>
+        <ArtistLink artistId={track.artistId} artistName={track.artistName} stopPropagation className="truncate text-xs text-muted-foreground" />
       </div>
 
       {track.bpm ? <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">{track.bpm} BPM</span> : null}

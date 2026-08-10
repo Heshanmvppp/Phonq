@@ -20,10 +20,12 @@ Stream hundreds of thousands of **Creative Commons** tracks — legally, in full
 
 Phonq streams the entire **Jamendo** catalog (500K+ CC-licensed tracks) with:
 
-- 🎧 **A real music player** — full-length streaming, a live waveform visualizer (Web Audio API), a persistent queue, shuffle, repeat and volume control
+- 🎧 **A real music player** — full-length streaming, a live waveform visualizer (Web Audio API), a persistent queue with drag-to-reorder, shuffle, repeat and volume control
 - 🔥 **Live discovery** — trending phonk charts and fresh drops straight from the API, plus genre radios
 - 🔍 **Full-catalog search** — tracks, artists, albums, tags and BPM
 - ❤️ **Your library** — favorites, playlists and listening history that sync across devices via **Google OAuth 2.0**
+- 🆑 **Artist & album pages** — full discographies, bios, similar-artists recommendations and album metadata (cover art, release date) built from a live → DB → static failure ladder
+- 🎯 **Personalized recommendations** — tracks surfaced from your listening history, favorite subgenres and similar artists
 - 🆓 **Zero ads, zero paywalls** — and legally free downloads where the artist allows
 
 And it's **100% open source** under the MIT license. Fork it, audit it, self-host it, or build on it.

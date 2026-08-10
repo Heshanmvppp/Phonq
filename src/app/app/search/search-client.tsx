@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Search as SearchIcon, X, Clock, TrendingUp, SearchX, WifiOff } from "lucide-react";
 import { TrackRow } from "@/components/track/track-row";
@@ -8,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, getAlbumHref, getArtistHref } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
 
 const RECENT_SEARCHES_KEY = "phonq-recent-searches";
@@ -346,41 +347,62 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
 
         {!loading && !error && hasResults && activeTab === "artists" && (
           <div className="space-y-6">
-            {grouped.sortedArtists.map(([artist, artistTracks]) => (
-              <section key={artist}>
-                <h2 className="mb-2 flex items-baseline justify-between text-sm font-semibold">
-                  <span>{artist}</span>
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {artistTracks.length} track{artistTracks.length === 1 ? "" : "s"}
-                  </span>
-                </h2>
-                <div className="flex flex-col gap-1">
-                  {artistTracks.map((track, index) => (
-                    <TrackRow key={track.id} track={track} queue={artistTracks} index={index} />
-                  ))}
-                </div>
-              </section>
-            ))}
+            {grouped.sortedArtists.map(([artist, artistTracks]) => {
+              const artistHref = getArtistHref(artistTracks[0]?.artistId ?? "", artist);
+              const label = artistHref ? (
+                <Link href={artistHref} className="hover:text-primary hover:underline">
+                  {artist}
+                </Link>
+              ) : (
+                artist
+              );
+              return (
+                <section key={artist}>
+                  <h2 className="mb-2 flex items-baseline justify-between text-sm font-semibold">
+                    <span>{label}</span>
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {artistTracks.length} track{artistTracks.length === 1 ? "" : "s"}
+                    </span>
+                  </h2>
+                  <div className="flex flex-col gap-1">
+                    {artistTracks.map((track, index) => (
+                      <TrackRow key={track.id} track={track} queue={artistTracks} index={index} />
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         )}
 
         {!loading && !error && hasResults && activeTab === "albums" && (
           <div className="space-y-6">
-            {grouped.sortedAlbums.map(([album, albumTracks]) => (
-              <section key={album}>
-                <h2 className="mb-2 flex items-baseline justify-between text-sm font-semibold">
-                  <span>{albumTracks[0]?.albumName ?? "Unknown album"}</span>
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {albumTracks.length} track{albumTracks.length === 1 ? "" : "s"}
-                  </span>
-                </h2>
-                <div className="flex flex-col gap-1">
-                  {albumTracks.map((track, index) => (
-                    <TrackRow key={track.id} track={track} queue={albumTracks} index={index} />
-                  ))}
-                </div>
-              </section>
-            ))}
+            {grouped.sortedAlbums.map(([album, albumTracks]) => {
+              const albumHref = getAlbumHref(albumTracks[0]?.albumId ?? "");
+              const albumName = albumTracks[0]?.albumName ?? "Unknown album";
+              const label = albumHref ? (
+                <Link href={albumHref} className="hover:text-primary hover:underline">
+                  {albumName}
+                </Link>
+              ) : (
+                albumName
+              );
+              return (
+                <section key={album}>
+                  <h2 className="mb-2 flex items-baseline justify-between text-sm font-semibold">
+                    <span>{label}</span>
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {albumTracks.length} track{albumTracks.length === 1 ? "" : "s"}
+                    </span>
+                  </h2>
+                  <div className="flex flex-col gap-1">
+                    {albumTracks.map((track, index) => (
+                      <TrackRow key={track.id} track={track} queue={albumTracks} index={index} />
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         )}
 

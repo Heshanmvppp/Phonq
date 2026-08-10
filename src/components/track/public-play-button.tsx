@@ -19,7 +19,9 @@ export function PublicPlayButton({ track }: { track: Track }) {
     playTrack(track);
   }
 
-  if (!track.audioUrl) {
+  // YouTube tracks stream through the IFrame engine (`videoId`), not a direct
+  // URL, so only pause the button for Jamendo tracks without a stream.
+  if (!track.audioUrl && track.source !== "youtube") {
     return (
       <Button size="lg" variant="outline" disabled>
         <PauseCircle className="size-5" /> Streaming paused

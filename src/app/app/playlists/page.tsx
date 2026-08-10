@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import Link from "next/link";
 
@@ -10,6 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { SectionHeading } from "@/components/marketing/section-heading";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { CardGridSkeleton } from "@/components/layout/skeletons";
 import { EditPlaylistDialog } from "./edit-playlist-dialog";
 
 export const metadata: Metadata = {
@@ -22,7 +24,17 @@ interface PlaylistsPageProps {
   searchParams: Promise<{ edit?: string }>;
 }
 
-export default async function PlaylistsPage({ searchParams }: PlaylistsPageProps) {
+export default function PlaylistsPage({ searchParams }: PlaylistsPageProps) {
+  return (
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <Suspense fallback={<CardGridSkeleton cells={6} />}>
+        <PlaylistsContent searchParams={searchParams} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function PlaylistsContent({ searchParams }: PlaylistsPageProps) {
   const session = await auth();
   if (!session?.user?.id) return null;
 
@@ -36,7 +48,7 @@ export default async function PlaylistsPage({ searchParams }: PlaylistsPageProps
   const editPlaylist = edit ? playlists.find((p) => p.id === edit) ?? null : null;
 
   return (
-    <div className="px-4 py-8 sm:px-6 lg:px-8">
+    <>
       <SectionHeading
         align="left"
         eyebrow="Library"
@@ -71,6 +83,6 @@ export default async function PlaylistsPage({ searchParams }: PlaylistsPageProps
       )}
 
       <EditPlaylistDialog key={editPlaylist?.id ?? "none"} playlist={editPlaylist} />
-    </div>
+    </>
   );
 }

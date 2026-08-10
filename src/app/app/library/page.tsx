@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import Link from "next/link";
 
@@ -9,6 +10,7 @@ import { prisma } from "@/lib/prisma";
 
 import { SectionHeading } from "@/components/marketing/section-heading";
 import { Card } from "@/components/ui/card";
+import { CardGridSkeleton } from "@/components/layout/skeletons";
 
 export const metadata: Metadata = {
   title: "Library",
@@ -16,7 +18,17 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default async function LibraryPage() {
+export default function LibraryPage() {
+  return (
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <Suspense fallback={<CardGridSkeleton cells={6} />}>
+        <LibraryContent />
+      </Suspense>
+    </div>
+  );
+}
+
+async function LibraryContent() {
   const session = await auth();
   if (!session?.user?.id) return null;
 
@@ -32,7 +44,7 @@ export default async function LibraryPage() {
   ]);
 
   return (
-    <div className="px-4 py-8 sm:px-6 lg:px-8">
+    <>
       <SectionHeading align="left" eyebrow="Your library" title="Everything you saved" />
 
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
@@ -96,6 +108,6 @@ export default async function LibraryPage() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

@@ -2,15 +2,18 @@
  * Bulk-seeds the YouTube catalog for a genre gap using `playlistItems.list`
  * (1 unit per 50 items) instead of `search.list` (100 units each).
  *
- * Requires a working `YOUTUBE_API_KEY` and a reachable `DATABASE_URL`:
+ * Requires a working `YOUTUBE_API_KEYS` (the 10-project quota pool) and a
+ * reachable `DATABASE_URL` / `YOUTUBE_DATABASE_URL`:
  *
- *   YOUTUBE_API_KEY=… npm run sync:youtube -- --playlist PL_ID --subgenre brazilian
+ *   YOUTUBE_API_KEYS=… npm run sync:youtube -- --playlist PL_ID --subgenre brazilian
  *
- * Curated uploads-playlists / genre playlists are cheap to seed this way — you
- * can backfill hundreds of tracks for the cost of a handful of search calls.
+ * Playlist paging + metadata refresh use the playback slice of the quota pool
+ * (1-unit ops), so bulk backfills consume almost none of the live-search budget.
  * Re-running upserts the rows (metadata is refreshed from videos.list).
  */
 import "dotenv/config";
+
+import { hasProjects } from "../src/lib/youtube-pool";
 import { seedFromPlaylist } from "../src/lib/youtube";
 
 function arg(name: string): string | undefined {
@@ -24,20 +27,22 @@ async function main(): Promise<void> {
   const subgenre = arg("subgenre");
   const max = Math.min(Math.max(Number(arg("max") ?? 200), 1), 500);
 
-  if (!process.env.YOUTUBE_API_KEY) {
-    console.error("sync:youtube needs a working YOUTUBE_API_KEY.");
-    process.exit(1);
-  }
-  if (!playlistId || !subgenre) {
+  if (!hasProjects()) {
     console.error(
-      "Usage: npm run sync:youtube -- --playlist=<playlistId> --subgenre=<slug> [--max=200]",
+      "sync:youtube needs YouTube API keys. Set YOUTUBE_API_KEYS (comma-separated\n" +
+        "list of up to 10 GCP service-account keys). The first YOUTUBE_SEARCH_PROJECTS\n" +
+        "(default 2) back live search; the remaining keys backfill playlists.",
     );
     process.exit(1);
   }
+  if (!playlistId || !subgenre) {
+    console.error("Usage: npm run sync:youtube -- --playlist=<playlistId> --subgenre=<slug> [--max=200]");
+    process.exit(1);
+  }
 
-  console.log(`Seeding subgenre "${subgenre}" from playlist ${playlistId} (up to ${max} items)…`);
+  console.log(`Seeding subgenre "${subgenre}" from playlist ${playlistId} (up to ${max} items)...`);
   const videos = await seedFromPlaylist(playlistId, subgenre, max);
-  console.log(`Seeded ${videos.length} videos → youtube_videos (source=playlist, subgenre=${subgenre}).`);
+  console.log(`Seeded ${videos.length} songs -> songs (source=playlist, subgenre=${subgenre}).`);
   if (videos.length === 0) {
     console.error("No videos seeded — is the playlist public and the key valid?");
     process.exit(1);
@@ -47,6 +52,6 @@ async function main(): Promise<void> {
 try {
   main();
 } catch (err) {
-  console.error(err instanceof Error ? err.message : err);
+  console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 }

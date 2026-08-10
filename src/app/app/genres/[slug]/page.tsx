@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { notFound } from "next/navigation";
 import { Compass } from "lucide-react";
@@ -9,6 +10,7 @@ import { fetchSubgenreTracks } from "@/lib/catalog";
 import { TrackGrid } from "@/components/track/track-grid";
 import { SectionHeading } from "@/components/marketing/section-heading";
 import { EmptyState } from "@/components/ui/empty-state";
+import { TrackGridSkeleton } from "@/components/layout/skeletons";
 
 interface GenrePageProps {
   params: Promise<{ slug: string }>;
@@ -27,7 +29,6 @@ export default async function GenrePage({ params }: GenrePageProps) {
   const subgenre = getSubgenre(slug);
   if (!subgenre) notFound();
 
-  const tracks = await fetchSubgenreTracks(slug, 40).catch(() => []);
   const Icon = subgenre.icon;
 
   return (
@@ -47,26 +48,39 @@ export default async function GenrePage({ params }: GenrePageProps) {
       </div>
 
       <div className="mt-10">
-        {tracks.length === 0 ? (
-          <EmptyState
-            icon={Compass}
-            title="No tracks yet"
-            description="We couldn't find tracks for this subgenre right now — check back soon."
-          />
-        ) : (
-          <>
-            <SectionHeading
-              align="left"
-              eyebrow={subgenre.name}
-              title="Top tracks"
-              description="The most popular tracks classified into this subgenre."
-            />
-            <div className="mt-6">
-              <TrackGrid tracks={tracks} />
-            </div>
-          </>
-        )}
+        <Suspense fallback={<TrackGridSkeleton />}>
+          <GenreTracks slug={slug} />
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+async function GenreTracks({ slug }: { slug: string }) {
+  const tracks = await fetchSubgenreTracks(slug, 40).catch(() => []);
+
+  if (tracks.length === 0) {
+    return (
+      <EmptyState
+        icon={Compass}
+        title="No tracks yet"
+        description="We couldn't find tracks for this subgenre right now — check back soon."
+      />
+    );
+  }
+
+  const subgenre = getSubgenre(slug);
+  return (
+    <>
+      <SectionHeading
+        align="left"
+        eyebrow={subgenre?.name}
+        title="Top tracks"
+        description="The most popular tracks classified into this subgenre."
+      />
+      <div className="mt-6">
+        <TrackGrid tracks={tracks} />
+      </div>
+    </>
   );
 }

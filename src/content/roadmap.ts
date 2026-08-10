@@ -29,25 +29,25 @@ export const roadmap: RoadmapItem[] = [
   {
     title: "Artist pages",
     description: "Browse an artist's full discography with their bio and similar artists.",
-    status: "In progress",
+    status: "Shipped",
     label: "v1.1",
   },
   {
     title: "Album pages & discography",
     description: "Album views with track listings, release date and cover art.",
-    status: "In progress",
+    status: "Shipped",
     label: "v1.1",
   },
   {
     title: "Queue drag & reorder",
     description: "Drag tracks inside the queue to change playback order.",
-    status: "Planned",
+    status: "Shipped",
     label: "v1.2",
   },
   {
     title: "Personalized recommendations",
     description: "Suggest tracks based on your history, genres and listening patterns.",
-    status: "Planned",
+    status: "Shipped",
     label: "v1.2",
   },
   {

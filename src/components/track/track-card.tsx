@@ -8,6 +8,7 @@ import { Download, Music2, Pause, Play } from "lucide-react";
 
 import { usePlayer } from "@/components/player/player-context";
 import { AddToPlaylistButton } from "@/components/track/add-to-playlist";
+import { ArtistLink } from "@/components/track/artist-link";
 import { LikeButton } from "@/components/track/like-button";
 import { ShareButton } from "@/components/track/share-button";
 import { Badge } from "@/components/ui/badge";
@@ -29,7 +30,9 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
   const isNowPlaying = isCurrent && isPlaying;
 
   function handlePlay() {
-    if (!track.audioUrl) return;
+    // YouTube tracks play via the IFrame engine from `videoId`, so skip the
+    // `audioUrl` gate for them.
+    if (!track.audioUrl && track.source !== "youtube") return;
     if (isCurrent) {
       togglePlay();
       return;
@@ -88,7 +91,7 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
           <p className={cn("truncate text-sm font-semibold", isCurrent && "text-primary")} title={track.name}>
             {track.name}
           </p>
-          <p className="truncate text-xs text-muted-foreground">{track.artistName}</p>
+          <ArtistLink artistId={track.artistId} artistName={track.artistName} className="truncate text-xs text-muted-foreground" />
           {!compact && (
             <div className="mt-1.5 flex items-center gap-1.5">
               <Badge variant="secondary" className="font-normal">

@@ -1,12 +1,17 @@
 import type { Metadata } from "next";
+
+import { Suspense } from "react";
 import { History, Clock, TrendingUp } from "lucide-react";
+
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { fetchTracksByIds, fetchTrendingPhonk } from "@/lib/catalog";
+
 import { Timeline } from "@/components/track/timeline";
 import { SectionHeading } from "@/components/marketing/section-heading";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { RowListSkeleton } from "@/components/layout/skeletons";
 import { groupByDate } from "@/lib/utils";
 
 export const metadata: Metadata = {
@@ -15,7 +20,17 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default async function HistoryPage() {
+export default function HistoryPage() {
+  return (
+    <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <Suspense fallback={<RowListSkeleton rows={6} />}>
+        <HistoryContent />
+      </Suspense>
+    </div>
+  );
+}
+
+async function HistoryContent() {
   const session = await auth();
   if (!session?.user?.id) return null;
 
@@ -48,7 +63,7 @@ export default async function HistoryPage() {
   const groups = groupByDate(timelineItems, (item) => item.timestamp);
 
   return (
-    <div className="px-4 py-8 sm:px-6 lg:px-8">
+    <>
       <SectionHeading
         align="left"
         eyebrow="Library"
@@ -90,6 +105,6 @@ export default async function HistoryPage() {
           <Timeline groups={groups} />
         </div>
       )}
-    </div>
+    </>
   );
 }

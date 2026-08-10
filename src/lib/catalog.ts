@@ -21,7 +21,7 @@ import "server-only";
  */
 
 import type { Prisma } from "@/generated/prisma/client";
-import type { Radio, Track, TracksParams } from "@/lib/jamendo";
+import type { Album, Artist, Radio, Track, TracksParams } from "@/lib/jamendo";
 import * as jamendo from "@/lib/jamendo";
 import { prisma } from "@/lib/prisma";
 import { classifyTrack, getSubgenre, PHONK_FAMILY_QUERY_TAGS, PHONK_SUBGENRES } from "@/lib/phonk-genres";
@@ -857,12 +857,338 @@ async function fillYouTubeGaps(
     } else if (opts.subgenre) {
       merged = dedupeTracks([...merged, ...(await fetchYouTubeLiveFill(opts.subgenre, short()))]);
     } else if (merged.length === 0) {
-      // Generic page with nothing at all: rescue it with a single budget-gated
-      // "phonk" search (throttled to once per day by the query fill) whose
-      // winners become the cached general pool for later free reads.
-      merged = dedupeTracks([...merged, ...(await fetchYouTubeQueryFill("phonk", short()))]);
+       // Generic page with nothing at all: rescue it with a single budget-gated
+       // "phonk" search (throttled to once per day by the query fill) whose
+       // winners become the cached general pool for later free reads.
+       merged = dedupeTracks([...merged, ...(await fetchYouTubeQueryFill("phonk", short()))]);
+     }
+   }
+
+   return merged.slice(0, opts.limit);
+ }
+
+/* ------------------------------------------------------------------ */
+/* Artist + album views (v1.1)                                        */
+/* ------------------------------------------------------------------ */
+
+export interface AlbumGroup {
+  album: Album;
+  tracks: Track[];
+}
+
+/** Jamendo artist ids are numeric; YouTube-sourced tracks carry `yt:` artist ids
+ * which have no Jamendo artist page, so we only link Jamendo artists. */
+export function isJamendoArtistId(artistId: string): boolean {
+  return /^\d+$/.test((artistId ?? "").trim());
+}
+
+/** Build an `Artist` for an artist page when the live API is down, by aggregating
+ * the cached/static tracks that belong to the artist. Best-effort only. */
+async function aggregateArtistFromTracks(id: string, name: string): Promise<Artist | null> {
+  let rows: Awaited<ReturnType<typeof prisma.cachedTrack.findMany>> | null = null;
+  try {
+    rows = await prisma.cachedTrack.findMany({
+      where: { artistId: id },
+      orderBy: { popularityWeek: "desc" },
+    });
+    if (rows.length === 0) {
+      rows = await prisma.cachedTrack.findMany({
+        where: { artistName: { equals: name, mode: "insensitive" } },
+        orderBy: { popularityWeek: "desc" },
+      });
+    }
+  } catch {
+    rows = null;
+  }
+
+  if (!rows || rows.length === 0) return null;
+  const image = rows.find((r) => r.image ?? r.imageSmall) ?? null;
+  const pic = image ? (image.image ?? image.imageSmall) : null;
+  const albumIds = new Set(rows.filter((r) => r.albumId).map((r) => r.albumId));
+  return {
+    id,
+    name: rows[0].artistName || name || "Unknown Artist",
+    image: pic,
+    imageSmall: pic,
+    website: null,
+    location: null,
+    joindate: null,
+    nbTracks: rows.length,
+    nbAlbums: albumIds.size,
+    nbFans: null,
+    bio: null,
+  };
+}
+
+/** Fetch a single artist, with the live → DB → static failure ladder. */
+export async function fetchArtist(id: string): Promise<Artist | null> {
+  if (!id || !isJamendoArtistId(id)) return null;
+
+  try {
+    const artist = await jamendo.fetchArtist(id);
+    await writeSuccessStatus();
+    return artist; // may be null (genuinely not found upstream)
+  } catch (err) {
+    await writeFailureStatus(err);
+    return aggregateArtistFromTracks(id, "");
+  }
+}
+
+const ARTIST_TRACKS_LIMIT = 100;
+const JAMENDO_PAGE_SIZE = 50;
+
+/** Paginate through Jamendo's tracks-by-artist until the cap is reached. */
+async function fetchAllArtistTracks(artistId: string, limit = ARTIST_TRACKS_LIMIT): Promise<Track[]> {
+  const cap = Math.max(1, Math.min(limit, ARTIST_TRACKS_LIMIT));
+  const out: Track[] = [];
+  let offset = 0;
+  while (out.length < cap) {
+    const batch = await jamendo.fetchTracksByArtist(artistId, Math.min(JAMENDO_PAGE_SIZE, cap - out.length), offset);
+    if (batch.length === 0) break;
+    out.push(...batch);
+    if (batch.length < JAMENDO_PAGE_SIZE) break;
+    offset += JAMENDO_PAGE_SIZE;
+  }
+  return out.slice(0, cap);
+}
+
+/** An artist's full discography, with the live → DB → static failure ladder. */
+export async function fetchArtistTracks(artistId: string, artistName = "", limit = ARTIST_TRACKS_LIMIT): Promise<Track[]> {
+  // Live Jamendo by numeric artist id (no curation — show the full catalog entry).
+  if (isJamendoArtistId(artistId)) {
+    try {
+      const tracks = await fetchAllArtistTracks(artistId, limit);
+      if (tracks.length > 0) {
+        await cacheTracks(tracks);
+        await writeSuccessStatus();
+        return tracks;
+      }
+    } catch (err) {
+      await writeFailureStatus(err);
     }
   }
 
-  return merged.slice(0, opts.limit);
+  // DB cache: match by stored artistId (numeric) or by artist name.
+  try {
+    const where: Prisma.CachedTrackWhereInput = artistName
+      ? { OR: [{ artistId: artistId }, { artistName: { equals: artistName, mode: "insensitive" } }] }
+      : { artistId: artistId };
+    const rows = await prisma.cachedTrack.findMany({
+      where,
+      orderBy: { popularityWeek: "desc", releaseDate: "desc" },
+      take: limit,
+    });
+    if (rows.length > 0) return dedupeTracks(rows.map(dbRowToTrack));
+  } catch {
+    /* no database */
+  }
+
+  // Static snapshot (only reachable when the artistName is known, since the
+  // bundled set is classified by metadata rather than Jamendo artist id).
+  if (artistName) {
+    return staticTracks.filter((t) => t.artistName === artistName).slice(0, limit);
+  }
+  return [];
+}
+
+/** Derive "similar artists" from the subgenres an artist's tracks sit in. */
+export async function fetchSimilarArtists(
+  artistId: string,
+  artistName: string,
+  tracks: Track[],
+  limit = 8,
+): Promise<Artist[]> {
+  if (limit <= 0) return [];
+  const subgenres = (Array.from(new Set(tracks.map((t) => t.subgenre).filter(Boolean))) as string[]).filter(Boolean);
+  if (subgenres.length === 0) return [];
+
+  const seen = new Set<string>();
+  const scored = new Map<string, { id: string; name: string; image: string | null; weight: number }>();
+
+  for (const slug of subgenres) {
+    const subs = await fetchSubgenreTracks(slug, 48).catch(() => []);
+    for (const t of subs) {
+      const isTarget = (artistName ? t.artistName === artistName : false) || t.artistId === artistId;
+      if (isTarget) continue;
+      if (!t.artistId || !isJamendoArtistId(t.artistId)) continue;
+      const key = `${t.artistId}:${t.artistName}`;
+      if (seen.has(key)) {
+        const existing = scored.get(key);
+        if (existing) existing.weight += 1;
+        continue;
+      }
+      seen.add(key);
+      scored.set(key, { id: t.artistId, name: t.artistName, image: t.image ?? t.imageSmall, weight: 1 });
+    }
+    if (scored.size >= limit) break;
+  }
+
+  return [...scored.values()]
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, limit)
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      image: a.image,
+      imageSmall: a.image,
+      website: null,
+      location: null,
+      joindate: null,
+      nbTracks: null,
+      nbAlbums: null,
+      nbFans: null,
+      bio: null,
+    }));
+}
+
+/** Fetch a single album, with the live → DB → static failure ladder. */
+export async function fetchAlbum(albumId: string): Promise<Album | null> {
+  if (isJamendoArtistId(albumId)) {
+    try {
+      const album = await jamendo.fetchAlbum(albumId);
+      await writeSuccessStatus();
+      if (album) return album;
+    } catch (err) {
+      await writeFailureStatus(err);
+    }
+  }
+
+  return fetchAlbumFromTracks(albumId);
+}
+
+/** Build an `Album` from its members when the live API is down. */
+export async function fetchAlbumTracks(albumId: string, limit = 50): Promise<Track[]> {
+  if (isJamendoArtistId(albumId)) {
+    try {
+      const out: Track[] = [];
+      let offset = 0;
+      while (out.length < limit) {
+        const batch = await jamendo.fetchTracksByAlbum(albumId, Math.min(JAMENDO_PAGE_SIZE, limit - out.length), offset);
+        if (batch.length === 0) break;
+        out.push(...batch);
+        if (batch.length < JAMENDO_PAGE_SIZE) break;
+        offset += JAMENDO_PAGE_SIZE;
+      }
+      if (out.length > 0) {
+        await cacheTracks(out);
+        await writeSuccessStatus();
+        return out;
+      }
+    } catch (err) {
+      await writeFailureStatus(err);
+    }
+  }
+
+  try {
+    const rows = await prisma.cachedTrack.findMany({
+      where: { albumId: albumId },
+      orderBy: { releaseDate: "asc", popularityWeek: "desc" },
+      take: limit,
+    });
+    if (rows.length > 0) return dedupeTracks(rows.map(dbRowToTrack));
+  } catch {
+    /* no database */
+  }
+
+  return staticTracks.filter((t) => t.albumId === albumId).slice(0, limit);
+}
+
+async function fetchAlbumFromTracks(albumId: string): Promise<Album | null> {
+  const tracks = await fetchAlbumTracks(albumId, 50);
+  if (albumId === "singles" || albumId === "unalbumed") {
+    const singles = tracks.filter((t) => !t.albumId);
+    const imageTrack = singles.find((t) => t.image ?? t.imageSmall) ?? null;
+    const pic = imageTrack ? (imageTrack.image ?? imageTrack.imageSmall) : null;
+    if (singles.length === 0) return null;
+    return {
+      id: albumId,
+      name: "Singles & tracks",
+      artistId: singles[0].artistId,
+      artistName: singles[0].artistName,
+      image: pic,
+      imageSmall: null,
+      releaseDate: null,
+      nbTracks: singles.length,
+    };
+  }
+
+  const valid = tracks.filter((t) => t.albumId === albumId && t.albumName);
+  if (valid.length === 0) return null;
+  const image = valid.find((t) => t.image ?? t.imageSmall) ?? null;
+  const releases = valid
+    .map((t) => t.releaseDate)
+    .filter(Boolean)
+    .sort();
+  return {
+    id: albumId,
+    name: valid[0].albumName,
+    artistId: valid[0].artistId,
+    artistName: valid[0].artistName,
+    image: image ? (image.image ?? image.imageSmall ?? null) : null,
+    imageSmall: null,
+    releaseDate: releases[0] ?? null,
+    nbTracks: valid.length,
+  };
+}
+
+/** Group a flat list of tracks into album-bundled discs for an artist page. */
+export function groupTracksByAlbum(tracks: Track[]): AlbumGroup[] {
+  const byAlbum = new Map<string, Track[]>();
+  const singles: Track[] = [];
+
+  for (const track of tracks) {
+    const key = track.albumId || "";
+    if (key) {
+      const list = byAlbum.get(key);
+      if (list) list.push(track);
+      else byAlbum.set(key, [track]);
+    } else {
+      singles.push(track);
+    }
+  }
+
+  const groups: AlbumGroup[] = [];
+  for (const [albumId, albumTracks] of byAlbum) {
+    const image = albumTracks.find((t) => t.image ?? t.imageSmall) ?? null;
+    const releases = albumTracks.map((t) => t.releaseDate).filter(Boolean).sort();
+    groups.push({
+      album: {
+        id: albumId,
+        name: albumTracks[0].albumName || "Unknown Album",
+        artistId: albumTracks[0].artistId || "",
+        artistName: albumTracks[0].artistName,
+        image: image ? (image.image ?? image.imageSmall ?? null) : null,
+        imageSmall: image ? (image.imageSmall ?? image.image ?? null) : null,
+        releaseDate: releases[0] ?? null,
+        nbTracks: albumTracks.length,
+      },
+      tracks: albumTracks,
+    });
+  }
+
+  groups.sort((a, b) => {
+    const aDate = a.album.releaseDate ? new Date(a.album.releaseDate).getTime() : Infinity;
+    const bDate = b.album.releaseDate ? new Date(b.album.releaseDate).getTime() : Infinity;
+    return aDate - bDate;
+  });
+
+  if (singles.length > 0) {
+    const pic = singles.find((t) => t.image ?? t.imageSmall);
+    const img = pic ? (pic.image ?? pic.imageSmall) : null;
+    groups.push({
+      album: {
+        id: "singles",
+        name: "Singles & tracks",
+        artistId: singles[0].artistId || "",
+        artistName: singles[0].artistName,
+        image: img,
+        imageSmall: null,
+        releaseDate: null,
+        nbTracks: singles.length,
+      },
+      tracks: singles,
+    });
+  }
+
+  return groups;
 }

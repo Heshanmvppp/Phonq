@@ -6,6 +6,7 @@ import type { Track } from "@/lib/jamendo";
 import { cn, formatDuration, timeAgo } from "@/lib/utils";
 import { Music2, Pause, Play } from "lucide-react";
 import { usePlayer } from "@/components/player/player-context";
+import { ArtistLink } from "@/components/track/artist-link";
 import { LikeButton } from "@/components/track/like-button";
 import Image from "next/image";
 
@@ -67,10 +68,10 @@ export function Timeline({ groups, onTrackPlay }: TimelineProps) {
                     </button>
                   </div>
 
-                  <div className="min-w-0 flex-1">
-                    <p className={cn("truncate text-sm font-medium", isCurrent && "text-primary")}>{item.track.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">{item.track.artistName}</p>
-                  </div>
+                   <div className="min-w-0 flex-1">
+                     <p className={cn("truncate text-sm font-medium", isCurrent && "text-primary")}>{item.track.name}</p>
+                     <ArtistLink artistId={item.track.artistId} artistName={item.track.artistName} stopPropagation className="truncate text-xs text-muted-foreground" />
+                   </div>
 
                   <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground sm:inline">
                     {timeAgo(item.timestamp)}
