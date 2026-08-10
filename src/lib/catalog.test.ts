@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   youtube: {
     fetchVideosByIds: vi.fn(),
     fetchCachedSubgenreVideos: vi.fn().mockResolvedValue([]),
+    fetchCachedGeneralVideos: vi.fn().mockResolvedValue([]),
     fetchGenreVideos: vi.fn().mockResolvedValue([]),
     fetchQueryVideos: vi.fn().mockResolvedValue([]),
     resolveSongVideo: vi.fn().mockResolvedValue(null),

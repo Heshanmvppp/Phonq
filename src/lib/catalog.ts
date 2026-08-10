@@ -427,6 +427,14 @@ export async function fetchYouTubeFill(subgenre: string, limit = 12): Promise<Tr
   return videos.map(youtubeToTrack).slice(0, limit);
 }
 
+/** Cached, subgenre-agnostic YouTube tracks (query-discovered during search fill
+ * and generic rescues), for topping up generic pages with free DB reads. */
+export async function fetchGeneralYouTubeFill(limit = 12): Promise<Track[]> {
+  if (limit <= 0) return [];
+  const videos = await youtube.fetchCachedGeneralVideos(limit);
+  return videos.map(youtubeToTrack).slice(0, limit);
+}
+
 /** Runtime genre-gap fill: search YouTube live (budget-gated, at most once per
  * day per genre) when the cached seed is still short — so thin genres never
  * render empty, without needing a manual `sync:youtube` run first. */
@@ -630,12 +638,17 @@ export async function fetchTracks(params: TracksParams = {}): Promise<Track[]> {
       start + pageSize,
     );
     await writeSuccessStatus();
-    return tracks.slice(start, start + pageSize);
+    const page = tracks.slice(start, start + pageSize);
+    // Auto-insert YouTube songs to fill the window when curated Jamendo content
+    // runs short; specific-id fetches (queue/favorites restoration) stay exact.
+    if (opts.ids) return page;
+    return fillYouTubeGaps(page, { limit: pageSize, subgenre: opts.subgenre, query: opts.search });
   } catch (err) {
     await writeFailureStatus(err);
     const cached = await queryDbTracks(opts);
-    if (cached && cached.length > 0) return cached;
-    return queryStaticTracks(opts);
+    if (cached && cached.length > 0) return opts.ids ? cached : fillYouTubeGaps(cached, { limit: opts.limit ?? 24, subgenre: opts.subgenre, query: opts.search });
+    const staticTracks = await queryStaticTracks(opts);
+    return opts.ids ? staticTracks : fillYouTubeGaps(staticTracks, { limit: opts.limit ?? 24, subgenre: opts.subgenre, query: opts.search });
   }
 }
 
@@ -729,12 +742,12 @@ export async function fetchTrendingPhonk(limit = 24): Promise<Track[]> {
     const tracks = await jamendo.fetchTrendingPhonk(Math.min(limit * 4, 100));
     await cacheTracks(tracks);
     await writeSuccessStatus();
-    return curatedTracks(tracks, {}).slice(0, limit);
+    return fillYouTubeGaps(curatedTracks(tracks, {}).slice(0, limit), { limit });
   } catch (err) {
     await writeFailureStatus(err);
     const cached = await queryDbTracks({ limit, phonkOnly: true });
-    if (cached && cached.length > 0) return cached;
-    return queryStaticTracks({ limit, phonkOnly: true });
+    if (cached && cached.length > 0) return fillYouTubeGaps(cached, { limit });
+    return fillYouTubeGaps(await queryStaticTracks({ limit, phonkOnly: true }), { limit });
   }
 }
 
@@ -743,17 +756,27 @@ export async function fetchFreshDrops(limit = 24): Promise<Track[]> {
     const tracks = await jamendo.fetchFreshDrops(Math.min(limit * 4, 100));
     await cacheTracks(tracks);
     await writeSuccessStatus();
-    return curatedTracks(tracks, {}).slice(0, limit);
+    return fillYouTubeGaps(curatedTracks(tracks, {}).slice(0, limit), { limit });
   } catch (err) {
     await writeFailureStatus(err);
     const cached = await queryDbTracks({ limit, order: "dateadded_desc", phonkOnly: true });
-    if (cached && cached.length > 0) return cached;
-    return queryStaticTracks({ limit, order: "dateadded_desc", phonkOnly: true });
+    if (cached && cached.length > 0) return fillYouTubeGaps(cached, { limit });
+    return fillYouTubeGaps(await queryStaticTracks({ limit, order: "dateadded_desc", phonkOnly: true }), { limit });
   }
 }
 
 export async function searchTracks(query: string, limit = 30, subgenre?: string): Promise<Track[]> {
   if (!query.trim()) return [];
+  const topUpFromYouTube = async (results: Track[]): Promise<Track[]> => {
+    // Search fill: when Jamendo's CC catalog comes back short or empty for a
+    // phonk query (YouTube/SoundCloud-native artists) — or when the upstream is
+    // degraded entirely — top up with budget-gated live YouTube search results
+    // for the exact query so search never renders empty. Winners are persisted
+    // on the run, so later identical queries are free DB reads.
+    if (results.length >= Math.min(limit, 6)) return results.slice(0, limit);
+    const filled = await fetchYouTubeQueryFill(query.trim(), limit - results.length, subgenre);
+    return dedupeTracks([...results, ...filled]).slice(0, limit);
+  };
   try {
     const tags = subgenre ? (getSubgenre(subgenre)?.jamendoTags ?? PHONK_FAMILY_QUERY_TAGS) : PHONK_FAMILY_QUERY_TAGS;
     const first = await jamendo.searchTracks(query, Math.min(limit * 4, 100), subgenre);
@@ -767,20 +790,13 @@ export async function searchTracks(query: string, limit = 30, subgenre?: string)
       candidates.push(...curatedTracks(enriched2, { subgenre }));
     }
     await writeSuccessStatus();
-    const results = [...candidates];
-    // Search fill: when Jamendo's CC catalog comes back short or empty for a
-    // phonk query (YouTube/SoundCloud-native artists), top up with budget-gated
-    // live YouTube search results for the exact query so search never renders
-    // empty. Persisted on the run — later identical queries are free DB reads.
-    if (results.length < Math.min(limit, 6)) {
-      results.push(...(await fetchYouTubeQueryFill(query.trim(), limit - results.length, subgenre)));
-    }
-    return results.slice(0, limit);
+    return topUpFromYouTube(candidates);
   } catch (err) {
     await writeFailureStatus(err);
     const cached = await queryDbTracks({ search: query.trim(), limit, subgenre, phonkOnly: true });
-    if (cached && cached.length > 0) return cached;
-    return queryStaticTracks({ search: query.trim(), limit, subgenre, phonkOnly: true });
+    if (cached && cached.length > 0) return topUpFromYouTube(cached);
+    const staticTracks = await queryStaticTracks({ search: query.trim(), limit, subgenre, phonkOnly: true });
+    return topUpFromYouTube(staticTracks);
   }
 }
 
@@ -812,4 +828,41 @@ function dedupeTracks<T extends Track>(tracks: T[]): T[] {
     out.push(track);
   }
   return out;
+}
+
+/**
+ * Auto-insert YouTube songs into any catalog surface that comes back short or
+ * empty - the "everywhere" twin of the genre and search gap fills. Live
+ * content stays primary; cached YouTube seeds (free DB reads) top up short
+ * pages; budget-gated live searches only run when there is a concrete intent
+ * (a subgenre or a query) and the page is still short, or (once per day, for
+ * the generic "phonk" pool) when a generic page is completely empty.
+ */
+async function fillYouTubeGaps(
+  tracks: Track[],
+  opts: { limit: number; subgenre?: string; query?: string },
+): Promise<Track[]> {
+  if (opts.limit <= 0) return [];
+  if (tracks.length >= opts.limit) return tracks.slice(0, opts.limit);
+
+  let merged = tracks;
+  const short = () => opts.limit - merged.length;
+
+  const seed = opts.subgenre ? await fetchYouTubeFill(opts.subgenre, short()) : await fetchGeneralYouTubeFill(short());
+  merged = dedupeTracks([...merged, ...seed]);
+
+  if (merged.length < opts.limit) {
+    if (opts.query) {
+      merged = dedupeTracks([...merged, ...(await fetchYouTubeQueryFill(opts.query.trim(), short(), opts.subgenre))]);
+    } else if (opts.subgenre) {
+      merged = dedupeTracks([...merged, ...(await fetchYouTubeLiveFill(opts.subgenre, short()))]);
+    } else if (merged.length === 0) {
+      // Generic page with nothing at all: rescue it with a single budget-gated
+      // "phonk" search (throttled to once per day by the query fill) whose
+      // winners become the cached general pool for later free reads.
+      merged = dedupeTracks([...merged, ...(await fetchYouTubeQueryFill("phonk", short()))]);
+    }
+  }
+
+  return merged.slice(0, opts.limit);
 }

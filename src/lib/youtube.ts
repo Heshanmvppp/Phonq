@@ -829,6 +829,22 @@ export async function fetchCachedSubgenreVideos(subgenre: string, limit = 24): P
   }
 }
 
+/** Cached YouTube videos not tied to a subgenre — query-discovered during search
+ * fill (e.g. "Brodyaga Funk") and generic live rescues. Used to top up generic
+ * pages (home strips, trending, fresh drops) with free DB reads. */
+export async function fetchCachedGeneralVideos(limit = 12): Promise<YouTubeVideo[]> {
+  try {
+    const rows = await prisma.youTubeVideo.findMany({
+      where: { embeddable: true, subgenre: null },
+      orderBy: { createdAt: "desc" },
+      take: Math.max(limit * 2, 20),
+    });
+    return rows.map(rowToVideo);
+  } catch {
+    return [];
+  }
+}
+
 /** All cached YouTube videos, used by the admin/seeding UI and quota page. */
 export async function fetchAllCachedVideos(limit = 100): Promise<YouTubeVideo[]> {
   try {
