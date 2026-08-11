@@ -159,6 +159,18 @@
   .animate-fade-in-fast {
     animation: fade-in-fast 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
+  .animate-fade-up-out {
+    animation: fade-up-out 0.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  .animate-slide-down {
+    animation: slide-down 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-theme-spin {
+    animation: theme-spin 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-toast-in {
+    animation: toast-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
   .strip-scroll {
     scrollbar-width: thin;
   }
@@ -284,6 +296,50 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes fade-up-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 500px;
+  }
+}
+
+@keyframes theme-spin {
+  from {
+    transform: rotate(-90deg) scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(0deg) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 

@@ -56,7 +56,7 @@ export function EmbedPlayer({ track }: { track: Track }) {
   }, []);
 
   return (
-    <div className="w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card shadow-2xl shadow-black/40">
+    <div className="animate-fade-up w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card shadow-2xl shadow-black/40">
       <div className="relative aspect-square w-full bg-muted">
         {track.image ? (
           <Image

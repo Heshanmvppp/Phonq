@@ -133,7 +133,7 @@ reach the UI (errors are logged server-side only).
 | `GET /api/v1/search`           | no   | Public read-only search API (rate-limited) |
 | `GET /api/health`              | no   | Uptime check + current catalog provider |
 | `GET /api/youtube/*`           | no   | YouTube resolve / genre-fill / quota + Redis bandwidth status (rate-limited) |
-| `GET /api/youtube/stream`      | no   | Same-origin audio proxy for YouTube tracks: youtube.js/yt-dlp extraction + Range-forwarding stream (rate-limited, catalog-gated) |
+| `GET /api/youtube/stream`      | no   | Same-origin audio proxy for YouTube tracks: youtube.js/yt-dlp extraction + Range-forwarding stream (rate-limited) |
 | `GET /api/download/:videoId`   | no   | Download a YouTube track as m4a via yt-dlp (rate-limited, catalog-gated) |
 | `GET /api/tracks`              | no   | Search/browse catalog (rate-limited) |
 | `GET /api/radios`              | no   | Genre radios                       |

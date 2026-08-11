@@ -24,10 +24,10 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={handleToggle}
-      className="flex cursor-pointer items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      className="flex cursor-pointer items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95"
       aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
     >
-      {isDark ? <Moon className="size-4" /> : <Sun className="size-4" />}
+      {isDark ? <Moon key="moon" className="size-4 animate-theme-spin" /> : <Sun key="sun" className="size-4 animate-theme-spin" />}
     </button>
   );
 }

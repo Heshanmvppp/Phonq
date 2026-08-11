@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
     fetchTracksByArtist: vi.fn(),
     fetchAlbum: vi.fn(),
     fetchTracksByAlbum: vi.fn(),
+    fetchArtists: vi.fn(),
+    fetchAlbums: vi.fn(),
     fetchRadios: vi.fn(),
     fetchTrendingPhonk: vi.fn(),
     fetchFreshDrops: vi.fn(),
@@ -63,7 +65,7 @@ vi.mock("@/lib/youtube", () => ({
 import * as jamendo from "@/lib/jamendo";
 import * as youtube from "@/lib/youtube";
 import type { Track, Artist, Album } from "@/lib/jamendo";
-import { fetchTracksByIds, fetchTrack, fetchFreshDrops, fetchRadios, fetchSubgenreTracks, fetchTracks, fetchTrendingPhonk, getCatalogStatus, searchTracks, fetchArtist, fetchArtistTracks, fetchSimilarArtists, fetchAlbum, fetchAlbumTracks, groupTracksByAlbum } from "@/lib/catalog";
+import { fetchTracksByIds, fetchTrack, fetchFreshDrops, fetchRadios, fetchSubgenreTracks, fetchTracks, fetchTrendingPhonk, getCatalogStatus, searchTracks, fetchArtist, fetchArtistTracks, fetchSimilarArtists, fetchAlbum, fetchAlbumTracks, groupTracksByAlbum, fetchBrowseArtists, fetchBrowseAlbums, aggregateArtistsFromTracks, aggregateAlbumsFromTracks } from "@/lib/catalog";
 
 const liveTracks = [
   {
@@ -586,6 +588,86 @@ describe("artist & album pages", () => {
       ];
       const groups = groupTracksByAlbum(tracks);
       expect(groups[0].album.image).toBe("fallback");
+    });
+  });
+
+  describe("browse artists & albums", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mocks.prisma.catalogStatus.upsert.mockResolvedValue(undefined);
+      mocks.prisma.cachedTrack.findMany.mockResolvedValue([]);
+      (globalThis as { __phonqStatusAt?: number; __phonqDegradedUntil?: number }).__phonqStatusAt = 0;
+      (globalThis as { __phonqStatusAt?: number; __phonqDegradedUntil?: number }).__phonqDegradedUntil = 0;
+    });
+
+    it("fetchBrowseArtists serves the live artists list", async () => {
+      vi.mocked(jamendo.fetchArtists).mockResolvedValue([
+        { id: "9", name: "MC Drift", image: "img", imageSmall: "small", website: null, location: null, joindate: null, nbTracks: 12, nbAlbums: 2, nbFans: 100, bio: null },
+      ]);
+
+      const artists = await fetchBrowseArtists(48);
+      expect(artists.map((a) => a.name)).toEqual(["MC Drift"]);
+      expect(mocks.prisma.catalogStatus.upsert).toHaveBeenCalled();
+    });
+
+    it("fetchBrowseArtists aggregates from the static snapshot when live and DB are down", async () => {
+      vi.mocked(jamendo.fetchArtists).mockRejectedValue(new Error("down"));
+      mocks.prisma.cachedTrack.findMany.mockRejectedValue(new Error("no database"));
+
+      const artists = await fetchBrowseArtists(48);
+      expect(artists.length).toBeGreaterThan(0);
+      expect(artists.some((a) => a.name === "Noonday Sun")).toBe(true);
+      expect(artists.every((a) => a.id && a.name)).toBe(true);
+    });
+
+    it("fetchBrowseAlbums serves the live albums list", async () => {
+      vi.mocked(jamendo.fetchAlbums).mockResolvedValue([
+        { id: "5", name: "Night Drive", artistId: "1", artistName: "DJ Phantom", image: "img", imageSmall: "small", releaseDate: "2024-01-01", nbTracks: 10 },
+      ]);
+
+      const albums = await fetchBrowseAlbums(48);
+      expect(albums.map((a) => a.name)).toEqual(["Night Drive"]);
+    });
+
+    it("fetchBrowseAlbums aggregates from the static snapshot when live and DB are down", async () => {
+      vi.mocked(jamendo.fetchAlbums).mockRejectedValue(new Error("down"));
+      mocks.prisma.cachedTrack.findMany.mockRejectedValue(new Error("no database"));
+
+      const albums = await fetchBrowseAlbums(48);
+      expect(albums.length).toBeGreaterThan(0);
+      expect(albums.some((a) => a.id === "376182")).toBe(true);
+    });
+
+    it("aggregateArtistsFromTracks dedupes by artist id and counts tracks + albums", () => {
+      const artists = aggregateArtistsFromTracks([
+        track({ id: "t1", artistId: "9", artistName: "MC Drift", albumId: "5", image: "img" }),
+        track({ id: "t2", artistId: "9", artistName: "MC Drift", albumId: "5" }),
+        track({ id: "t3", artistId: "9", artistName: "MC Drift", albumId: "6" }),
+        track({ id: "t4", artistId: "7", artistName: "Other Mood" }),
+      ]);
+      expect(artists).toHaveLength(2);
+      const drift = artists.find((a) => a.id === "9");
+      expect(drift?.nbTracks).toBe(3);
+      expect(drift?.nbAlbums).toBe(2);
+      expect(drift?.image).toBe("img");
+    });
+
+    it("aggregateAlbumsFromTracks dedupes by album id and counts tracks", () => {
+      const albums = aggregateAlbumsFromTracks([
+        track({ id: "t1", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", releaseDate: "2024-01-01", image: "img" }),
+        track({ id: "t2", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive" }),
+        track({ id: "t3", artistId: "2", artistName: "Other", albumId: "6", albumName: "Later", releaseDate: "2024-05-05" }),
+      ]);
+      expect(albums).toHaveLength(2);
+      const night = albums.find((a) => a.id === "5");
+      expect(night?.nbTracks).toBe(2);
+      expect(night?.releaseDate).toBe("2024-01-01");
+      expect(night?.image).toBe("img");
+    });
+
+    it("aggregateAlbumsFromTracks falls back to a placeholder name for unknown albums", () => {
+      const albums = aggregateAlbumsFromTracks([track({ id: "t1", artistId: "1", artistName: "DJ Phantom", albumId: "999", albumName: "" })]);
+      expect(albums[0]?.name).toBe("Album 999");
     });
   });
 });

@@ -91,7 +91,7 @@ export function MarketingNav() {
       </div>
 
       {mobileOpen && (
-        <div className="border-t border-border bg-background px-4 py-4 lg:hidden">
+        <div className="animate-slide-down border-t border-border bg-background px-4 py-4 lg:hidden">
           {marketingNav.map((group) => (
             <div key={group.label} className="mb-3">
               <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{group.label}</p>

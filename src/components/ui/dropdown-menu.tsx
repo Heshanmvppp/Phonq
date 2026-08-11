@@ -28,6 +28,8 @@ const EDGE_MARGIN = 8;
 
 export function DropdownMenu({ trigger, children, align = "end", className, onOpenChange }: DropdownMenuProps) {
   const [open, setOpen] = React.useState(false);
+  const [closing, setClosing] = React.useState(false);
+  const [mounted, setMounted] = React.useState(false);
   const [position, setPosition] = React.useState<{ top: number; left: number } | null>(null);
   const rootRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
@@ -40,11 +42,30 @@ export function DropdownMenu({ trigger, children, align = "end", className, onOp
   }, [onOpenChange]);
 
   const setOpenState = React.useCallback((next: boolean) => {
-    setOpen(next);
-    onOpenChangeRef.current?.(next);
+    if (next) {
+      setOpen(true);
+      setMounted(true);
+      setClosing(false);
+      onOpenChangeRef.current?.(true);
+    } else {
+      setClosing(true);
+      onOpenChangeRef.current?.(false);
+      const id = window.setTimeout(() => {
+        setOpen(false);
+        setMounted(false);
+        setClosing(false);
+      }, 150);
+      return () => window.clearTimeout(id);
+    }
   }, []);
 
-  const toggle = React.useCallback(() => setOpenState(!open), [open, setOpenState]);
+  const toggle = React.useCallback(() => {
+    if (open) {
+      setOpenState(false);
+    } else {
+      setOpenState(true);
+    }
+  }, [open, setOpenState]);
 
   const place = React.useCallback(() => {
     const triggerEl = triggerRef.current;
@@ -65,7 +86,7 @@ export function DropdownMenu({ trigger, children, align = "end", className, onOp
   }, [align]);
 
   React.useLayoutEffect(() => {
-    if (!open) return;
+    if (!mounted || closing) return;
     place();
     const frame = requestAnimationFrame(() => itemRefs.current[0]?.focus());
     const menuEl = menuRef.current;
@@ -79,7 +100,7 @@ export function DropdownMenu({ trigger, children, align = "end", className, onOp
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [open, place]);
+  }, [mounted, closing, place]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -151,13 +172,14 @@ export function DropdownMenu({ trigger, children, align = "end", className, onOp
       >
         {trigger}
       </button>
-      {open && typeof document !== "undefined"
+      {mounted && typeof document !== "undefined"
         ? createPortal(
             <MenuContext.Provider value={contextValue}>
               <div
                 ref={menuRef}
                 className={cn(
-                  "fixed z-[100] min-w-48 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl animate-fade-up",
+                  "fixed z-[100] min-w-48 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl",
+                  closing ? "animate-fade-up-out" : "animate-fade-up",
                   className,
                 )}
                 style={{

@@ -8,6 +8,7 @@ import {
   Heart,
   ListMusic,
   ListPlus,
+  MoreHorizontal,
   Music2,
   Pause,
   Play,
@@ -93,6 +94,7 @@ export function PlayerBar() {
   const [incomingTrack, setIncomingTrack] = React.useState<Track | null>(null);
   const [isCrossfading, setIsCrossfading] = React.useState(false);
   const [shareOpen, setShareOpen] = React.useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
   if ((currentTrack?.id ?? null) !== currentTrackId) {
     setCurrentTrackId(currentTrack?.id ?? null);
@@ -297,7 +299,7 @@ export function PlayerBar() {
             aria-label="Volume control (scroll to adjust)"
             title="Scroll over the speaker icon to change volume"
           >
-            <button type="button" onClick={toggleMute} className={cn(iconClass)} aria-label="Mute">
+            <button type="button" onClick={toggleMute} className={cn(iconClass, "active:scale-95")} aria-label="Mute">
               {muted || volume === 0 ? (
                 <VolumeX className="size-5" />
               ) : volume < 0.5 ? (
@@ -323,26 +325,33 @@ export function PlayerBar() {
           <div className="sm:hidden">
             <DropdownMenu
               trigger={
-                <span className={cn(iconClass, "rounded-md p-1.5")}>
-                  <Heart className={cn("size-5", favoriteIds.has(currentTrack.id) && "fill-primary text-primary")} />
+                <span className={cn(iconClass, "rounded-md p-1.5 active:scale-95")}>
+                  <MoreHorizontal className="size-5" />
                 </span>
               }
+              onOpenChange={setMobileMenuOpen}
             >
               <div className="max-h-64 overflow-y-auto p-1">
                 <button
                   type="button"
-                  onClick={() => setFavorite(currentTrack.id, !favoriteIds.has(currentTrack.id))}
+                  onClick={() => {
+                    setFavorite(currentTrack.id, !favoriteIds.has(currentTrack.id));
+                    setMobileMenuOpen(false);
+                  }}
                   className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-muted"
                 >
                   <Heart className={cn("size-4", favoriteIds.has(currentTrack.id) && "fill-primary text-primary")} />
                   {favoriteIds.has(currentTrack.id) ? "Remove from favorites" : "Add to favorites"}
                 </button>
                 {activeTrack && (
-                  <AddToPlaylistDropdownItem trackId={activeTrack.id} />
+                  <AddToPlaylistDropdownItem trackId={activeTrack.id} onAdded={() => setMobileMenuOpen(false)} />
                 )}
                 <button
                   type="button"
-                  onClick={() => setShareOpen(true)}
+                  onClick={() => {
+                    setShareOpen(true);
+                    setMobileMenuOpen(false);
+                  }}
                   className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-muted"
                 >
                   <Share2 className="size-4" />
@@ -355,7 +364,7 @@ export function PlayerBar() {
           <button
             type="button"
             onClick={() => setQueueOpen(true)}
-            className={cn("relative flex items-center gap-1.5 rounded-md p-1.5 transition-colors", iconClass, queueOpen && "text-primary")}
+            className={cn("relative flex items-center gap-1.5 rounded-md p-1.5 transition-colors active:scale-95", iconClass, queueOpen && "text-primary")}
             aria-label="Open queue"
           >
             <ListMusic className="size-5" />
@@ -380,7 +389,7 @@ export function PlayerBar() {
   );
 }
 
-function AddToPlaylistDropdownItem({ trackId }: { trackId: string }) {
+function AddToPlaylistDropdownItem({ trackId, onAdded }: { trackId: string; onAdded?: () => void }) {
   const { status } = useSession();
   const router = useRouter();
   const [playlists, setPlaylists] = React.useState<Array<{ id: string; name: string }>>([]);
@@ -408,6 +417,7 @@ function AddToPlaylistDropdownItem({ trackId }: { trackId: string }) {
       });
       if (res.ok) {
         setSubmenu(false);
+        onAdded?.();
         router.refresh();
       }
     } catch { /* ignore */ }

@@ -14,8 +14,8 @@ interface LogoProps {
 
 export function Logo({ href = "/", className, showWordmark = true }: LogoProps) {
   return (
-    <Link href={href} className={cn("inline-flex items-center gap-2 font-display text-lg font-bold tracking-tight", className)}>
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground ring-1 ring-inset ring-black/5 shadow-sm">
+    <Link href={href} className={cn("group inline-flex items-center gap-2 font-display text-lg font-bold tracking-tight", className)}>
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground ring-1 ring-inset ring-black/5 shadow-sm transition-transform group-hover:scale-105">
         <AudioLines className="size-5" />
       </span>
       {showWordmark && <span>Phonq</span>}

@@ -1,7 +1,6 @@
 import "server-only";
 
 import { extractStreamUrl } from "@/lib/youtube-stream";
-import { findSongByVideoId } from "@/lib/youtube-db";
 import { checkRateLimit, ipKey } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -18,25 +17,14 @@ export const runtime = "nodejs";
  * browser can't read them for the Web Audio analyser; proxying keeps the media
  * same-origin (just like the Jamendo `/api/audio` proxy) so the analyser works.
  *
- * Range requests are forwarded upstream so seeking works. Only videos already
- * in the catalog are served.
+ * Range requests are forwarded upstream so seeking works. Access is bounded by
+ * the per-IP rate limit below; playback must never depend on the catalog DB
+ * being reachable or the song being cached, or every YouTube track would
+ * silently fall back to the IFrame engine.
  */
 
 const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
 const ONE_HOUR = 60 * 60 * 24 * 365;
-const VALIDATED_TTL_MS = 30 * 60 * 1000;
-
-/** Catalog membership is checked once per id, then trusted for 30 minutes so
- * seek/preload range requests don't hammer Postgres. */
-const validatedCache = new Map<string, number>();
-
-async function isInCatalog(videoId: string): Promise<boolean> {
-  const expiry = validatedCache.get(videoId);
-  if (expiry !== undefined && expiry > Date.now()) return true;
-  const song = await findSongByVideoId(videoId);
-  if (song) validatedCache.set(videoId, Date.now() + VALIDATED_TTL_MS);
-  return song != null;
-}
 
 export async function OPTIONS() {
   return new Response(null, { headers: corsHeaders() });
@@ -51,9 +39,6 @@ export async function GET(request: Request) {
   const videoId = url.searchParams.get("videoId")?.trim() ?? "";
   if (!VIDEO_ID_RE.test(videoId)) {
     return new Response("Invalid videoId", { status: 400, headers: corsHeaders() });
-  }
-  if (!(await isInCatalog(videoId))) {
-    return new Response("Video not in catalog", { status: 404, headers: corsHeaders() });
   }
 
   let target: string;

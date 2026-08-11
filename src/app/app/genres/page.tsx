@@ -31,10 +31,10 @@ export default function GenresIndexPage() {
               {members.map((subgenre) => {
                 const Icon = subgenre.icon;
                 return (
-                  <Link key={subgenre.slug} href={`/app/genres/${subgenre.slug}`} className="block">
+                  <Link key={subgenre.slug} href={`/app/genres/${subgenre.slug}`} className="group block">
                     <Card className="flex h-full flex-col justify-between gap-3 p-5 transition-colors hover:border-primary/50 hover:bg-muted/30">
                       <div className="flex items-center gap-3">
-                        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary transition-transform group-hover:scale-110">
                           <Icon className="size-5" aria-hidden="true" />
                         </span>
                         <p className="font-medium leading-tight">{subgenre.name}</p>

@@ -1218,3 +1218,139 @@ export function groupTracksByAlbum(tracks: Track[]): AlbumGroup[] {
 
   return groups;
 }
+
+/* ------------------------------------------------------------------ */
+/* Browse lists (top-level artists & albums pages)                     */
+/* ------------------------------------------------------------------ */
+
+interface ArtistAggregate {
+  name: string;
+  image: string | null;
+  tracks: number;
+  albums: Set<string>;
+}
+
+/** Collapse a flat track list into distinct artists, counting tracks and
+ * distinct albums. Used for the "browse artists" page when the live API is
+ * unreachable. */
+export function aggregateArtistsFromTracks(tracks: Track[]): Artist[] {
+  const byId = new Map<string, ArtistAggregate>();
+  for (const t of tracks) {
+    if (!t.artistId || !t.artistName) continue;
+    const entry = byId.get(t.artistId) ?? { name: t.artistName, image: null, tracks: 0, albums: new Set<string>() };
+    entry.name = entry.name || t.artistName;
+    entry.image = entry.image ?? (t.image || t.imageSmall) ?? null;
+    entry.tracks += 1;
+    if (t.albumId) entry.albums.add(t.albumId);
+    byId.set(t.artistId, entry);
+  }
+  return [...byId.entries()]
+    .map(([id, e]) => ({
+      id,
+      name: e.name,
+      image: e.image,
+      imageSmall: e.image,
+      website: null,
+      location: null,
+      joindate: null,
+      nbTracks: e.tracks,
+      nbAlbums: e.albums.size,
+      nbFans: null,
+      bio: null,
+    }))
+    .sort((a, b) => (b.nbTracks ?? 0) - (a.nbTracks ?? 0));
+}
+
+/** Collapse a flat track list into distinct albums, counting tracks. Used for
+ * the "browse albums" page when the live API is unreachable. */
+export function aggregateAlbumsFromTracks(tracks: Track[]): Album[] {
+  const byId = new Map<string, { name: string; artistId: string; artistName: string; image: string | null; count: number; releaseDate: string | null }>();
+  for (const t of tracks) {
+    if (!t.albumId) continue;
+    const entry = byId.get(t.albumId) ?? {
+      name: `Album ${t.albumId}`,
+      artistId: t.artistId,
+      artistName: t.artistName,
+      image: null,
+      count: 0,
+      releaseDate: null,
+    };
+    if (entry.name === `Album ${t.albumId}` && t.albumName) entry.name = t.albumName;
+    entry.artistId = entry.artistId || t.artistId;
+    entry.artistName = entry.artistName || t.artistName;
+    entry.image = entry.image ?? (t.image || t.imageSmall) ?? null;
+    entry.count += 1;
+    if (!entry.releaseDate && t.releaseDate) entry.releaseDate = t.releaseDate;
+    byId.set(t.albumId, entry);
+  }
+  return [...byId.entries()]
+    .map(([id, e]) => ({
+      id,
+      name: e.name,
+      artistId: e.artistId,
+      artistName: e.artistName,
+      image: e.image,
+      imageSmall: e.image,
+      releaseDate: e.releaseDate,
+      nbTracks: e.count,
+    }))
+    .sort((a, b) => (b.nbTracks ?? 0) - (a.nbTracks ?? 0));
+}
+
+/** Popular artists for the "Browse artists" page, with the live → DB → static
+ * failure ladder. */
+export async function fetchBrowseArtists(limit = 48): Promise<Artist[]> {
+  try {
+    const artists = await jamendo.fetchArtists(limit);
+    if (artists.length > 0) {
+      await writeSuccessStatus();
+      return artists;
+    }
+  } catch (err) {
+    await writeFailureStatus(err);
+  }
+
+  try {
+    const rows = await prisma.cachedTrack.findMany({
+      orderBy: { popularityWeek: "desc" },
+      take: 500,
+    });
+    if (rows.length > 0) {
+      const artists = aggregateArtistsFromTracks(rows.map(dbRowToTrack));
+      if (artists.length > 0) return artists.slice(0, limit);
+    }
+  } catch {
+    /* no database */
+  }
+
+  return aggregateArtistsFromTracks(staticTracks).slice(0, limit);
+}
+
+/** Popular albums for the "Browse albums" page, with the live → DB → static
+ * failure ladder. */
+export async function fetchBrowseAlbums(limit = 48): Promise<Album[]> {
+  try {
+    const albums = await jamendo.fetchAlbums(limit);
+    if (albums.length > 0) {
+      await writeSuccessStatus();
+      return albums;
+    }
+  } catch (err) {
+    await writeFailureStatus(err);
+  }
+
+  try {
+    const rows = await prisma.cachedTrack.findMany({
+      orderBy: { popularityWeek: "desc" },
+      take: 500,
+    });
+    if (rows.length > 0) {
+      const albums = aggregateAlbumsFromTracks(rows.map(dbRowToTrack));
+      if (albums.length > 0) return albums.slice(0, limit);
+    }
+  } catch {
+    /* no database */
+  }
+
+  return aggregateAlbumsFromTracks(staticTracks).slice(0, limit);
+}

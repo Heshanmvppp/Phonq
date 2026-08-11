@@ -1,23 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  findSongByVideoId: vi.fn(),
   extractStreamUrl: vi.fn(),
   checkRateLimit: vi.fn(async () => true),
   ipKey: vi.fn(() => "test-ip"),
   fetch: vi.fn(),
 }));
 
-vi.mock("@/lib/youtube-db", () => ({ findSongByVideoId: mocks.findSongByVideoId }));
 vi.mock("@/lib/youtube-stream", () => ({ extractStreamUrl: mocks.extractStreamUrl }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: mocks.checkRateLimit, ipKey: mocks.ipKey }));
 
 import { GET } from "@/app/api/youtube/stream/route";
 
 const VALID = "dQw4w9WgXcQ";
-const NOT_CACHED = "AAAAAAAAAAA";
 const EXTRACT_FAIL = "BBBBBBBBBBB";
-const STREAM_OK = "CCCCCCCCCCC";
 
 const request = (videoId: string, init?: RequestInit) =>
   new Request(`http://localhost/api/youtube/stream?videoId=${videoId}`, init);
@@ -36,7 +32,6 @@ describe("GET /api/youtube/stream", () => {
   it("rejects malformed video ids", async () => {
     const res = await GET(request("abc"));
     expect(res.status).toBe(400);
-    expect(mocks.findSongByVideoId).not.toHaveBeenCalled();
     expect(mocks.extractStreamUrl).not.toHaveBeenCalled();
   });
 
@@ -44,25 +39,16 @@ describe("GET /api/youtube/stream", () => {
     mocks.checkRateLimit.mockResolvedValue(false);
     const res = await GET(request(VALID));
     expect(res.status).toBe(429);
-    expect(mocks.findSongByVideoId).not.toHaveBeenCalled();
-  });
-
-  it("returns 404 for videos outside the catalog", async () => {
-    mocks.findSongByVideoId.mockResolvedValue(null);
-    const res = await GET(request(NOT_CACHED));
-    expect(res.status).toBe(404);
     expect(mocks.extractStreamUrl).not.toHaveBeenCalled();
   });
 
   it("returns 502 when the stream cannot be extracted", async () => {
-    mocks.findSongByVideoId.mockResolvedValue({ videoId: EXTRACT_FAIL, title: "Nope" });
     mocks.extractStreamUrl.mockRejectedValue(new Error("bot check"));
     const res = await GET(request(EXTRACT_FAIL));
     expect(res.status).toBe(502);
   });
 
   it("streams the extracted audio back to the client", async () => {
-    mocks.findSongByVideoId.mockResolvedValue({ videoId: STREAM_OK, title: "Song" });
     mocks.extractStreamUrl.mockResolvedValue({ url: "https://rr.googlevideo.com/videoplayback?x=1" });
     mocks.fetch.mockResolvedValue(
       new Response("audio-bytes", {
@@ -71,14 +57,14 @@ describe("GET /api/youtube/stream", () => {
       }),
     );
 
-    const res = await GET(request(STREAM_OK));
+    const res = await GET(request(VALID));
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("audio/mp4");
     expect(res.headers.get("accept-ranges")).toBe("bytes");
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
     expect(await res.text()).toBe("audio-bytes");
-    expect(mocks.extractStreamUrl).toHaveBeenCalledWith(STREAM_OK);
+    expect(mocks.extractStreamUrl).toHaveBeenCalledWith(VALID);
     expect(mocks.fetch).toHaveBeenCalledWith(
       "https://rr.googlevideo.com/videoplayback?x=1",
       expect.objectContaining({ method: "GET", redirect: "follow" }),
@@ -86,7 +72,6 @@ describe("GET /api/youtube/stream", () => {
   });
 
   it("forwards Range requests upstream and serves 206", async () => {
-    mocks.findSongByVideoId.mockResolvedValue({ videoId: STREAM_OK, title: "Song" });
     mocks.extractStreamUrl.mockResolvedValue({ url: "https://rr.googlevideo.com/videoplayback?x=1" });
     mocks.fetch.mockResolvedValue(
       new Response("audio", {
@@ -99,7 +84,7 @@ describe("GET /api/youtube/stream", () => {
       }),
     );
 
-    const res = await GET(request(STREAM_OK, { headers: { Range: "bytes=0-4" } }));
+    const res = await GET(request(VALID, { headers: { Range: "bytes=0-4" } }));
 
     expect(res.status).toBe(206);
     expect(res.headers.get("content-range")).toBe("bytes 0-4/309288");
@@ -112,11 +97,10 @@ describe("GET /api/youtube/stream", () => {
   });
 
   it("returns 502 when the upstream fails", async () => {
-    mocks.findSongByVideoId.mockResolvedValue({ videoId: STREAM_OK, title: "Song" });
     mocks.extractStreamUrl.mockResolvedValue({ url: "https://rr.googlevideo.com/videoplayback?x=1" });
     mocks.fetch.mockResolvedValue(new Response("upstream error", { status: 403 }));
 
-    const res = await GET(request(STREAM_OK));
+    const res = await GET(request(VALID));
     expect(res.status).toBe(502);
   });
 });

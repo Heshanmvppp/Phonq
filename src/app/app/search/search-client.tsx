@@ -193,7 +193,7 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
         )}
 
         {visibleSuggestions && (
-          <div className="absolute top-full mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-border bg-card text-card-foreground shadow-lg">
+          <div className="animate-fade-in-fast absolute top-full mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-border bg-card text-card-foreground shadow-lg">
             <div className="p-2">
               {recentSearches.length > 0 && (
                 <>

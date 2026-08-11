@@ -68,7 +68,7 @@ export function PlaylistActions({ playlistId, name }: PlaylistActionsProps) {
             Cancel
           </Button>
           <Button variant="destructive" onClick={() => void deletePlaylist()} disabled={busy}>
-            {busy ? "Deleting…" : "Delete playlist"}
+            {busy ? <><span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> Deleting…</> : "Delete playlist"}
           </Button>
         </div>
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}

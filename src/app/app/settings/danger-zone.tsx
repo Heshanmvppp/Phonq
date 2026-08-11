@@ -48,13 +48,13 @@ export function DangerZone() {
       </div>
 
       {confirmOpen ? (
-        <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+        <div className="animate-fade-up mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
           <p className="text-sm text-foreground">
             Are you absolutely sure? This deletes everything and signs you out. It cannot be undone.
           </p>
           <div className="mt-3 flex flex-wrap gap-3">
             <Button size="sm" variant="destructive" onClick={deleteData} disabled={busy}>
-              <Trash2 className="size-4" />
+              {busy ? <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Trash2 className="size-4" />}
               {busy ? "Deleting…" : "Yes, delete everything"}
             </Button>
             <Button size="sm" variant="outline" onClick={() => setConfirmOpen(false)} disabled={busy}>

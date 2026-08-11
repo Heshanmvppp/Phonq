@@ -434,6 +434,26 @@ export async function fetchAlbum(albumId: string): Promise<Album | null> {
   return normalizeAlbum(results[0]!);
 }
 
+/** Popular artists across the catalog (top-level "browse artists" list). */
+export async function fetchArtists(limit = 48, offset = 0): Promise<Artist[]> {
+  const results = await get<JamendoArtist[]>(
+    "artists",
+    { order: "popularity_total", limit, offset, imagesize: 300 },
+    { ttlMs: 5 * 60 * 1000 },
+  );
+  return results.map((a) => normalizeArtist(a));
+}
+
+/** Popular albums across the catalog (top-level "browse albums" list). */
+export async function fetchAlbums(limit = 48, offset = 0): Promise<Album[]> {
+  const results = await get<JamendoAlbum[]>(
+    "albums",
+    { order: "popularity_total", limit, offset, imagesize: 300 },
+    { ttlMs: 5 * 60 * 1000 },
+  );
+  return results.map(normalizeAlbum);
+}
+
 /** All tracks belonging to an artist (no curation — full discography). */
 export async function fetchTracksByArtist(artistId: string, limit = 50, offset = 0): Promise<Track[]> {
   const results = await get<JamendoTrack[]>("tracks", {

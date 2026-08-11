@@ -56,6 +56,7 @@ import {
   fetchQueryVideos,
   isoDurationToSeconds,
   isBlacklistedTitle,
+  isDeprioritizedTitle,
   isTopicChannel,
   durationBounds,
   normalizeKey,
@@ -99,16 +100,13 @@ describe("isoDurationToSeconds", () => {
 });
 
 describe("isBlacklistedTitle", () => {
-  it("flags mixes, compilations, lives, karaoke, and track-length labels", () => {
+  it("flags unambiguous junk: mixes, compilations, karaoke, and track-length labels", () => {
     for (const title of [
       "Brazilian Funk Mix 2026",
       "Melhores Funks do Ano — Compilation",
       "Funk Full Album 1 Hour",
       "Top 10 Brazilian Funk",
       "Non-Stop Funk Session",
-      "MC Kevinho (Live)",
-      "Funk ao vivo",
-      "Cover: Ne Me Quitte Pas",
       "Karaoke Brasileiro",
       "Reaction to the Funk",
       "Lyrics Video",
@@ -121,7 +119,7 @@ describe("isBlacklistedTitle", () => {
     }
   });
 
-  it("keeps official audio and remixes (remix intentionally not blacklisted)", () => {
+  it("keeps official audio, remixes, and live/covers (never disqualified)", () => {
     for (const title of [
       "Brasil Funk Banger",
       "Anitta - Envolver (Official Audio)",
@@ -129,8 +127,36 @@ describe("isBlacklistedTitle", () => {
       "Official Music Video",
       "delivery funk",
       "mixed feelings",
+      "MC Kevinho (Live)",
+      "Funk ao vivo",
+      "MC Kevin O Chris - Evoluiu (Ao Vivo)",
+      "Cover: Ne Me Quitte Pas",
     ]) {
       expect(isBlacklistedTitle(title), title).toBe(false);
+    }
+  });
+});
+
+describe("isDeprioritizedTitle", () => {
+  it("flags official live/covers for soft deprioritization", () => {
+    for (const title of [
+      "MC Kevinho (Live)",
+      "Funk ao vivo",
+      "MC Kevin O Chris - Evoluiu (Ao Vivo)",
+      "Cover: Ne Me Quitte Pas",
+    ]) {
+      expect(isDeprioritizedTitle(title), title).toBe(true);
+    }
+  });
+
+  it("ignores studio originals and junk", () => {
+    for (const title of [
+      "Brasil Funk Banger",
+      "Anitta - Envolver (Official Audio)",
+      "Brazilian Funk Mix 2026",
+      "Karaoke Brasileiro",
+    ]) {
+      expect(isDeprioritizedTitle(title), title).toBe(false);
     }
   });
 });
@@ -146,9 +172,9 @@ describe("isTopicChannel", () => {
 });
 
 describe("durationBounds", () => {
-  it("uses the 150–420s window by default", () => {
-    expect(durationBounds()).toEqual({ min: 150, max: 420 });
-    expect(durationBounds("drift")).toEqual({ min: 150, max: 420 });
+  it("uses the 120–420s window by default", () => {
+    expect(durationBounds()).toEqual({ min: 120, max: 420 });
+    expect(durationBounds("drift")).toEqual({ min: 120, max: 420 });
   });
 
   it("lowers the floor to 90s for Brazilian funk", () => {
@@ -285,6 +311,62 @@ describe("fetchGenreVideos", () => {
     poolMock.hasProjects.mockReturnValue(true);
     process.env.YOUTUBE_RUNTIME_FILL = "0";
     expect(await fetchGenreVideos("fill-x2", ["brasil phonk"], 5)).toEqual([]);
+  });
+
+  it("keeps official '(Ao Vivo)' songs while dropping mixes and shorts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = new URL(String(input));
+        const isSearch = url.pathname.endsWith("/search");
+        const body = isSearch
+          ? {
+              items: [
+                {
+                  id: { videoId: "v1" },
+                  snippet: { title: "Evoluiu (Ao Vivo)", channelId: "c1", channelTitle: "MC Kevin O Chris - Topic" },
+                },
+                {
+                  id: { videoId: "v2" },
+                  snippet: { title: "Funk Mix 2026 (Non-Stop)", channelId: "c9", channelTitle: "Funk Mixes" },
+                },
+                {
+                  id: { videoId: "v3" },
+                  snippet: { title: "Evoluiu (clip)", channelId: "c8", channelTitle: "Clips Channel" },
+                },
+              ],
+            }
+          : {
+              items: [
+                {
+                  id: "v1",
+                  snippet: { title: "Evoluiu (Ao Vivo)", channelId: "c1", channelTitle: "MC Kevin O Chris - Topic" },
+                  contentDetails: { duration: "PT3M2S" },
+                  status: { embeddable: true },
+                },
+                {
+                  id: "v2",
+                  snippet: { title: "Funk Mix 2026 (Non-Stop)", channelId: "c9", channelTitle: "Funk Mixes" },
+                  contentDetails: { duration: "PT1H2M3S" },
+                  status: { embeddable: true },
+                },
+                {
+                  id: "v3",
+                  snippet: { title: "Evoluiu (clip)", channelId: "c8", channelTitle: "Clips Channel" },
+                  contentDetails: { duration: "PT30S" },
+                  status: { embeddable: true },
+                },
+              ],
+            };
+        return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+      }),
+    );
+
+    const videos = await fetchGenreVideos("brazilian-fill-4", ["Evoluiu"], 12);
+    // The official "(Ao Vivo)" release (an artist-published song) must surface;
+    // the non-stop mix and the 30s clip are still filtered out.
+    expect(videos.map((v) => v.videoId)).toEqual(["v1"]);
+    expect(videos[0].artistName).toBe("MC Kevin O Chris");
   });
 
   it("drops mix compilations and shorts that pass the title/duration filters", async () => {

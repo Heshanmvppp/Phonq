@@ -81,8 +81,7 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
         )}
 
         {/* Overlay actions on bottom of cover */}
-        <div className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 p-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-          <div className="flex-1" />
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1.5 p-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           {downloadHref && canDownloadTrack(track) && (
             <a
               href={downloadHref}

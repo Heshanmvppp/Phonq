@@ -24,7 +24,7 @@ export function AlbumLink({ albumId, albumName, className, stopPropagation }: Al
   return (
     <Link
       href={href}
-      className={className}
+      className={cn("transition-colors hover:text-primary", className)}
       onClick={stopPropagation ? (e) => e.stopPropagation() : undefined}
     >
       {label}

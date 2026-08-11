@@ -98,7 +98,7 @@ export function EditPlaylistDialog({ playlist }: EditPlaylistDialogProps) {
             Cancel
           </Button>
           <Button type="submit" disabled={busy || !name.trim()}>
-            {busy ? "Saving…" : "Save changes"}
+            {busy ? <><span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> Saving…</> : "Save changes"}
           </Button>
         </div>
       </form>

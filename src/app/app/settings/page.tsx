@@ -30,7 +30,7 @@ export default async function SettingsPage() {
       <SectionHeading align="left" eyebrow="Account" title="Settings" />
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
-        <Card className="p-6">
+        <Card className="transition-all hover:shadow-md p-6">
           <div className="flex items-center gap-4">
             <Avatar src={session.user.image ?? undefined} fallback={initials(name)} />
             <div>

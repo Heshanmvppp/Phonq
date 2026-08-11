@@ -27,7 +27,7 @@ export function ShareButton({ url, title, image, className }: ShareButtonProps) 
           setOpen(true);
         }}
         className={cn(
-          "inline-flex items-center justify-center text-muted-foreground transition-colors hover:text-foreground",
+          "inline-flex items-center justify-center text-muted-foreground transition-colors hover:text-foreground active:scale-90",
           className,
         )}
         aria-label="Share track"

@@ -21,7 +21,7 @@ export function ArtistLink({ artistId, artistName, className, stopPropagation }:
   return (
     <Link
       href={href}
-      className={className}
+      className={cn("transition-colors hover:text-primary", className)}
       onClick={stopPropagation ? (e) => e.stopPropagation() : undefined}
     >
       {artistName}

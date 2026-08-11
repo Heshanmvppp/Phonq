@@ -20,7 +20,7 @@ export function EmptyState({ icon: Icon, title, description, children, className
         className,
       )}
     >
-      <span className="flex size-14 items-center justify-center rounded-full bg-muted text-muted-foreground/70">
+      <span className="flex size-14 items-center justify-center rounded-full bg-muted text-muted-foreground/70 animate-fade-up">
         <Icon className="size-7" aria-hidden="true" />
       </span>
       <div>

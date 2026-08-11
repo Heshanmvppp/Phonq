@@ -45,7 +45,7 @@ export function Footer() {
                <ul className="space-y-2">
                  {group.items.map((item) => (
                    <li key={item.href}>
-                     <Link href={item.href} className="text-sm text-muted-foreground transition-colors hover:text-foreground">
+                      <Link href={item.href} className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline underline-offset-4">
                        {item.label}
                      </Link>
                    </li>

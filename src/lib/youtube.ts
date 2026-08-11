@@ -139,19 +139,28 @@ function cacheSetSong(video: YouTubeVideo): void {
 }
 
 /**
- * Near-disqualifying title/branding signals (case-insensitive). Word-boundary
- * safe so "mix" doesn't fire inside "remix"/"mixset" and "live" not on
- * "deliver"/"alive". Bare "remix" is deliberately NOT blacklisted — for
- * Brazilian funk the official remix is often the primary release.
+ * Near-disqualifying title signals (case-insensitive, word-boundary safe).
+ * These are unambiguous junk: mixes, compilations, hour-long re-ups, lyric
+ * slideshows, karaoke, reactions, type beats. A match hard-drops the candidate
+ * in genre/search fills and costs -100 in the resolution pipeline.
+ *
+ * Deliberately NOT here: bare "remix" (for Brazilian funk the official remix is
+ * often the primary release), and "live"/"ao vivo"/"cover" — those are official
+ * artist publications (an "(Ao Vivo)" cut is frequently THE hit), so they get a
+ * soft deprioritization instead of disqualification.
  */
-const TITLE_BLACKLIST_RE =
-  /\b(mix(es)?|mixtape|compilation|full album|one hour|1 hour|playlist|top \d+|melhores|remix pack|non-?stop|live|ao vivo|cover|karaoke|reaction|lyrics? video|type beat|instrumental only)\b/i;
+const TITLE_JUNK_RE =
+  /\b(mix(es)?|mixtape|compilation|full album|one hour|1 hour|playlist|top \d+|melhores|remix pack|non-?stop|karaoke|reaction|lyrics? video|type beat|instrumental only)\b/i;
 
-/** Sane track-length window in seconds (2:30–7:00), tuned for full-length
+/** Legitimate-but-less-desirable signals: official live/covers lose to the
+ * studio original but must never be dropped outright. */
+const TITLE_DEPRIORITIZE_RE = /\b(live|ao vivo|cover)\b/i;
+
+/** Sane track-length window in seconds (2:00–7:00), tuned for full-length
  * official audio uploads. Kills Shorts (<1m), DJ sets, mixes and whole
  * albums uploaded as a single video. */
 const DURATION_MAX = 7 * 60;
-const DURATION_MIN = 150;
+const DURATION_MIN = 120;
 /** Brazilian funk often runs shorter (2:00–3:30); lower the floor to 1:30. */
 const DURATION_MIN_FUNK = 90;
 
@@ -288,10 +297,17 @@ export function normalizeKey(name: string): string {
     .trim();
 }
 
-/** True when a title carries a near-disqualifying signal from the blacklist
- * (case-insensitive, word-boundary safe; "remix" deliberately excluded). */
+/** True when a title carries a near-disqualifying signal (unambiguous junk:
+ * mixes, compilations, hour-long re-ups, lyric slideshows, karaoke…). */
 export function isBlacklistedTitle(title: string): boolean {
-  return TITLE_BLACKLIST_RE.test(title);
+  return TITLE_JUNK_RE.test(title);
+}
+
+/** True when a title is a legitimate-but-deprioritized official release:
+ * "(Ao Vivo)"/"(Live)" cuts and covers lose to studio originals but are never
+ * dropped — for Brazilian funk the live version is often the primary release. */
+export function isDeprioritizedTitle(title: string): boolean {
+  return TITLE_DEPRIORITIZE_RE.test(title);
 }
 
 /** Whether `duration` (seconds) sits inside the sane track-length window. */
@@ -410,7 +426,8 @@ interface RankedVideo extends YouTubeVideo {
 /** Rank every search candidate through the layered scoring pipeline:
  *
  *    Channel is "- Topic"                  +50   (ground-truth signal)
- *    Title matches blacklist regex         -100  (near-disqualifying)
+ *    Title matches junk blacklist          -100  (near-disqualifying)
+ *    Title is live/cover ("ao vivo")        -5   (deprioritize, never drop)
  *    Title contains the artist name        +15
  *    Duration inside the sane range        +20
  *    Has music topicCategories             +10
@@ -452,6 +469,7 @@ function rankCandidates(
     let score = 0;
     if (isTopicChannel(channelTitle)) score += 50;
     if (isBlacklistedTitle(title)) score -= 100;
+    if (isDeprioritizedTitle(title)) score -= 5;
     if (artist && nTitle.includes(artist)) score += 15;
     if (durationInRange(meta.duration, subgenre)) score += 20;
     if (hasMusicTopic(meta.topicCategories)) score += 10;
@@ -817,12 +835,14 @@ function isLyricResult(title: string | undefined, channelTitle: string | undefin
 }
 
 /** Rank candidates for a genre (not a specific song): prefer auto-generated
- * Topic audio and official/VEVO uploads that carry a thumbnail. */
+ * Topic audio and official/VEVO uploads that carry a thumbnail. Official
+ * "(Ao Vivo)"/"(Live)" cuts rank slightly below studio versions (never dropped). */
 function genreCandidateScore(item: SearchItem): number {
   const title = item.snippet?.title ?? "";
   const channel = item.snippet?.channelTitle ?? "";
   let score = 0;
   if (title) score += 2;
+  if (isDeprioritizedTitle(title)) score -= 1;
   if (channel.endsWith("- topic")) score += 4;
   if (channel.includes("vevo")) score += 2;
   if (channel.includes("official")) score += 1;
@@ -873,7 +893,7 @@ export async function fetchGenreVideos(
         const title = item.snippet?.title?.trim() ?? "";
         if (!title) return false;
         if (isLyricResult(title, item.snippet?.channelTitle)) return false;
-        if (isBlacklistedTitle(title)) return false; // mixes, compilations, "ao vivo"…
+        if (isBlacklistedTitle(title)) return false; // junk: mixes, compilations, 1-hour re-ups…
         return true;
       })
       .sort((a, b) => genreCandidateScore(b) - genreCandidateScore(a))
@@ -950,7 +970,7 @@ export async function fetchQueryVideos(query: string, limit = 12, subgenre?: str
       const title = item.snippet?.title?.trim() ?? "";
       if (!title) return false;
       if (isLyricResult(title, item.snippet?.channelTitle)) return false;
-      if (isBlacklistedTitle(title)) return false; // mixes, compilations, "ao vivo"…
+      if (isBlacklistedTitle(title)) return false; // junk: mixes, compilations, 1-hour re-ups…
       return true;
     })
     .sort((a, b) => genreCandidateScore(b) - genreCandidateScore(a))

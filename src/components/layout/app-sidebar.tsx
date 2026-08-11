@@ -5,7 +5,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
-import { Heart, History, Home, Library, ListMusic, Plus, Radar, Search, Settings, Sparkles } from "lucide-react";
+import { Disc3, Heart, History, Home, Library, ListMusic, Plus, Radar, Search, Settings, Sparkles, Users } from "lucide-react";
 
 import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,8 @@ const navigation = [
   { href: "/app/home", label: "Home", icon: Home },
   { href: "/app/search", label: "Search", icon: Search },
   { href: "/app/genres", label: "Genres", icon: Sparkles },
+  { href: "/app/artists", label: "Artists", icon: Users },
+  { href: "/app/albums", label: "Albums", icon: Disc3 },
   { href: "/app/recommendations", label: "Recommendations", icon: Radar },
   { href: "/app/library", label: "Library", icon: Library },
   { href: "/app/liked", label: "Liked songs", icon: Heart },
@@ -175,7 +177,7 @@ export function AppSidebar() {
             disabled={busy || !name.trim()}
             className="w-full"
           >
-            {busy ? "Creating…" : "Create playlist"}
+            {busy ? <><span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> Creating…</> : "Create playlist"}
           </Button>
         </form>
       </Dialog>

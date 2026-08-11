@@ -317,7 +317,7 @@ export function AddToPlaylistButton({ trackId, className }: AddToPlaylistButtonP
               className="flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
               disabled={busy || !name.trim()}
             >
-              <Check className="size-4" />
+              {busy ? <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <Check className="size-4" />}
               {busy ? "Creating…" : "Create and add"}
             </button>
             <button

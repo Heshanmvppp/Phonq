@@ -30,16 +30,37 @@ export function Dialog({ open, onOpenChange, title, description, children, class
   const panelRef = React.useRef<HTMLDivElement>(null);
   const onOpenChangeRef = React.useRef(onOpenChange);
   const lastFocusedRef = React.useRef<HTMLElement | null>(null);
+  const [closing, setClosing] = React.useState(false);
+  const [mounted, setMounted] = React.useState(open);
 
   React.useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
   }, [onOpenChange]);
 
   React.useEffect(() => {
-    if (!open) return;
+    if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- mount guard for open/close animation
+      setMounted(true);
+      setClosing(false);
+      lastFocusedRef.current = document.activeElement as HTMLElement | null;
+      panelRef.current?.focus();
+    }
+  }, [open]);
 
-    lastFocusedRef.current = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus();
+  React.useEffect(() => {
+    if (!open && mounted) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- trigger close animation
+      setClosing(true);
+      const id = window.setTimeout(() => {
+        setMounted(false);
+        setClosing(false);
+      }, 200);
+      return () => window.clearTimeout(id);
+    }
+  }, [open, mounted]);
+
+  React.useEffect(() => {
+    if (!mounted) return;
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -76,14 +97,17 @@ export function Dialog({ open, onOpenChange, title, description, children, class
       document.body.style.overflow = "";
       lastFocusedRef.current?.focus?.();
     };
-  }, [open]);
+  }, [mounted]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className={cn(
+          "absolute inset-0 bg-black/60 backdrop-blur-md",
+          closing ? "animate-fade-up-out" : "transition-opacity",
+        )}
         onClick={() => onOpenChange(false)}
         aria-hidden="true"
       />
@@ -95,7 +119,8 @@ export function Dialog({ open, onOpenChange, title, description, children, class
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         className={cn(
-          "relative z-10 w-full max-w-md rounded-t-2xl border border-border bg-popover p-6 text-popover-foreground shadow-2xl animate-fade-up outline-none sm:rounded-2xl",
+          "relative z-10 w-full max-w-md max-h-[85vh] overflow-y-auto rounded-t-2xl border border-border bg-popover p-6 text-popover-foreground shadow-2xl outline-none sm:rounded-2xl",
+          closing ? "animate-fade-up-out" : "animate-fade-up",
           className,
         )}
       >
