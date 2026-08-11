@@ -7,12 +7,11 @@ import Image from "next/image";
 import { Download, Music2, Pause, Play } from "lucide-react";
 
 import { usePlayer } from "@/components/player/player-context";
-import { AddToPlaylistButton } from "@/components/track/add-to-playlist";
+import { AlbumLink } from "@/components/track/album-link";
 import { ArtistLink } from "@/components/track/artist-link";
 import { LikeButton } from "@/components/track/like-button";
-import { ShareButton } from "@/components/track/share-button";
 import { Badge } from "@/components/ui/badge";
-import { cn, canDownloadTrack, formatDuration, trackDownloadHref } from "@/lib/utils";
+import { cn, canDownloadTrack, formatDuration, getAlbumHref, trackDownloadHref } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
 
 interface TrackCardProps {
@@ -30,8 +29,6 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
   const isNowPlaying = isCurrent && isPlaying;
 
   function handlePlay() {
-    // YouTube tracks play via the IFrame engine from `videoId`, so skip the
-    // `audioUrl` gate for them.
     if (!track.audioUrl && track.source !== "youtube") return;
     if (isCurrent) {
       togglePlay();
@@ -44,9 +41,6 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
     }
   }
 
-  const tileClass =
-    "flex h-9 flex-1 items-center justify-center rounded-md border border-border/60 transition-colors";
-  const actionTileClass = `${tileClass} text-muted-foreground hover:bg-muted hover:text-foreground`;
   const downloadHref = trackDownloadHref(track);
 
   return (
@@ -57,7 +51,7 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
         className,
       )}
     >
-      <div className={cn("relative aspect-square overflow-hidden rounded-lg bg-muted", isNowPlaying && "animate-breathe") }>
+      <div className={cn("relative aspect-square overflow-hidden rounded-lg bg-muted", isNowPlaying && "animate-breathe")}>
         {track.image ? (
           <Image
             src={track.image}
@@ -85,6 +79,38 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
             </span>
           </span>
         )}
+
+        {/* Overlay actions on bottom of cover */}
+        <div className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 p-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+          <div className="flex-1" />
+          {downloadHref && canDownloadTrack(track) && (
+            <a
+              href={downloadHref}
+              target={track.source === "youtube" ? undefined : "_blank"}
+              rel={track.source === "youtube" ? undefined : "noreferrer"}
+              download
+              onClick={(e) => e.stopPropagation()}
+              className="flex size-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/80"
+              aria-label={`Download ${track.name}`}
+              title={track.source === "youtube" ? "Download (YouTube)" : "Download (CC license)"}
+            >
+              <Download className="size-4" />
+            </a>
+          )}
+          <LikeButton
+            trackId={track.id}
+            initialLiked={liked}
+            className="flex size-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/80 [&_svg]:text-white [&_svg]:fill-transparent data-[liked=true]:text-primary [&_svg[data-liked=true]]:fill-primary"
+          />
+          <button
+            type="button"
+            onClick={handlePlay}
+            className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/30 transition-transform hover:scale-105 active:scale-95"
+            aria-label={isNowPlaying ? "Pause" : "Play"}
+          >
+            {isNowPlaying ? <Pause className="size-4" /> : <Play className="ml-0.5 size-4" />}
+          </button>
+        </div>
       </div>
 
       <div className={cn("mt-3 flex items-start justify-between gap-2", compact && "mt-2")}>
@@ -93,6 +119,9 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
             {track.name}
           </p>
           <ArtistLink artistId={track.artistId} artistName={track.artistName} className="truncate text-xs text-muted-foreground" />
+          {getAlbumHref(track.albumId) ? (
+            <AlbumLink albumId={track.albumId} albumName={track.albumName} className="block truncate text-xs text-muted-foreground/70" />
+          ) : null}
           {!compact && (
             <div className="mt-1.5 flex items-center gap-1.5">
               <Badge variant="secondary" className="font-normal">
@@ -106,38 +135,6 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
             </div>
           )}
         </div>
-        <AddToPlaylistButton trackId={track.id} className="-mr-1" />
-      </div>
-
-      <div className="mt-2.5 flex items-center gap-1.5">
-        {downloadHref && canDownloadTrack(track) && (
-          <a
-            href={downloadHref}
-            target={track.source === "youtube" ? undefined : "_blank"}
-            rel={track.source === "youtube" ? undefined : "noreferrer"}
-            download
-            onClick={(e) => e.stopPropagation()}
-            className={actionTileClass}
-            aria-label={`Download ${track.name}`}
-            title={track.source === "youtube" ? "Download (YouTube)" : "Download (CC license)"}
-          >
-            <Download className="size-4" />
-          </a>
-        )}
-        <LikeButton trackId={track.id} initialLiked={liked} className={tileClass} />
-        <ShareButton
-          url={`/track/${track.id}`}
-          title={`${track.name} — ${track.artistName}`}
-          className={actionTileClass}
-        />
-        <button
-          type="button"
-          onClick={handlePlay}
-          className="flex h-9 flex-1 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-sm shadow-primary/20 transition-colors hover:bg-primary/90 active:scale-95"
-          aria-label={isNowPlaying ? "Pause" : "Play"}
-        >
-          {isNowPlaying ? <Pause className="size-4" /> : <Play className="ml-0.5 size-4" />}
-        </button>
       </div>
     </div>
   );

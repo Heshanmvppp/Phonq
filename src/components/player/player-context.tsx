@@ -59,11 +59,16 @@ const JAMENDO_STREAM_HOSTS = new Set([
 ]);
 
 /**
- * Routes a Jamendo stream through our CORS-safe proxy so the browser can play
- * it (Jamendo's CDN serves tracks without `Access-Control-Allow-Origin`).
- * Non-Jamendo URLs are passed through untouched.
+ * Resolves the same-origin URL the native `<audio>` element should load for a
+ * track. Jamendo streams are routed through the CORS-safe `/api/audio` proxy
+ * (their CDN sends no `Access-Control-Allow-Origin`); YouTube-sourced tracks
+ * play through the `/api/youtube/stream` proxy, which extracts and streams the
+ * audio server-side. Non-Jamendo URLs are passed through untouched.
  */
 function proxiedAudioUrl(track: Track | null): string {
+  if (track?.source === "youtube") {
+    return track.videoId ? `/api/youtube/stream?videoId=${encodeURIComponent(track.videoId)}` : "";
+  }
   if (!track?.audioUrl) return "";
   try {
     const u = new URL(track.audioUrl);
@@ -112,6 +117,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [queueOpen, setQueueOpen] = React.useState(false);
   const [vizEnabled, setVizEnabled] = React.useState(false);
   const [favoriteIds, setFavoriteIds] = React.useState<Set<string>>(new Set());
+  /** True when a YouTube track's streamed audio failed and we fell back to the IFrame engine. */
+  const [ytFallback, setYtFallback] = React.useState(false);
 
   const queueRef = React.useRef(queue);
   const queueIndexRef = React.useRef(queueIndex);
@@ -121,6 +128,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const currentTimeRef = React.useRef(0);
   const durationRef = React.useRef(0);
   const volumeRef = React.useRef(volume);
+  const ytFallbackRef = React.useRef(false);
   const preloadAudioRef = React.useRef<HTMLAudioElement | null>(null);
   const preloadedNextRef = React.useRef<{ index: number; url: string } | null>(null);
 
@@ -154,6 +162,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     volumeRef.current = volume;
   }, [volume]);
+
+  React.useEffect(() => {
+    ytFallbackRef.current = ytFallback;
+  }, [ytFallback]);
 
   /** Refetches the signed-in user's favorite ids so the player-bar heart stays in sync. */
   React.useEffect(() => {
@@ -358,7 +370,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const seek = React.useCallback((time: number) => {
-    if (currentTrackRef.current?.source === "youtube") {
+    if (currentTrackRef.current?.source === "youtube" && ytFallbackRef.current) {
       youtubeRef.current?.seekTo(time);
       setCurrentTime(time);
       return;
@@ -394,7 +406,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const togglePlay = React.useCallback(() => {
     const track = currentTrackRef.current;
     if (!track) return;
-    if (track.source === "youtube") {
+    if (track.source === "youtube" && ytFallbackRef.current) {
       if (isPlaying) youtubeRef.current?.pause();
       else youtubeRef.current?.play();
       return;
@@ -416,24 +428,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (!track) return;
     if (!isYouTube && !audio) return;
 
-    // YouTube tracks have no direct stream — the IFrame engine loads the video
-    // itself from the `videoId` prop and reports state back through callbacks.
-    pendingUrlRef.current = isYouTube ? null : proxiedAudioUrl(track);
+    // YouTube tracks play through our same-origin stream proxy (which extracts
+    // + deciphers the audio server-side), so the native `<audio>` element feeds
+    // the analyser just like Jamendo. Only if streaming fails do we fall back
+    // to the IFrame engine (see the `error` listener below).
+    const url = proxiedAudioUrl(track);
+    pendingUrlRef.current = url;
     setCurrentTime(0);
     setDuration(0);
     setIsLoading(true);
-    if (isYouTube) {
-      // Stop any track still playing through the native audio element (e.g. the
-      // previous Jamendo track) so it doesn't continue under the YouTube video.
-      if (audio) {
-        audio.pause();
-        audio.removeAttribute("src");
-        audio.load();
-      }
+    setYtFallback(false);
+
+    if (!url || !audio) {
+      setIsLoading(false);
       return;
     }
-
-    const url = proxiedAudioUrl(track);
 
     void probeCors(url).then((allowed) => {
       if (pendingUrlRef.current !== url) return;
@@ -468,8 +477,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (nextIndex < 0 || nextIndex >= len) return;
     const nextTrack = q[nextIndex];
     if (!nextTrack || nextTrack.id === track.id) return;
-    if (nextTrack.source === "youtube") return; // IFrame engine preloads on its own
     const url = proxiedAudioUrl(nextTrack);
+    if (!url) return;
     preloadedNextRef.current = { index: nextIndex, url };
     void probeCors(url).then((allowed) => {
       if (preloadedNextRef.current?.url !== url) return;
@@ -490,7 +499,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     const audio = audioRef.current;
     if (audio) audio.volume = muted ? 0 : volume;
-  }, [volume, muted]);
+  }, [volume, muted, ytFallback]);
 
   /** Global keyboard shortcuts. */
   React.useEffect(() => {
@@ -584,6 +593,24 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       reportHistory();
     };
     const onPause = () => setIsPlaying(false);
+    const onError = () => {
+      const track = currentTrackRef.current;
+      if (track?.source === "youtube" && !ytFallbackRef.current) {
+        // Streaming failed (extraction error, rate limit, upstream failure) →
+        // fall back to the IFrame engine. Clear the analyser wiring too so the
+        // freshly remounted `<audio>` element doesn't inherit a dead media
+        // source chain (see the keyed element below).
+        setYtFallback(true);
+        setIsLoading(false);
+        setVizEnabled(false);
+        analyserRef.current = null;
+        const el = audioRef.current;
+        if (el) {
+          el.removeAttribute("src");
+          el.load();
+        }
+      }
+    };
     const onEnded = () => {
       if (repeatRef.current === "one") {
         if (audioRef.current) {
@@ -601,6 +628,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     audio.addEventListener("canplay", onCanPlay);
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
+    audio.addEventListener("error", onError);
     audio.addEventListener("ended", onEnded);
 
     return () => {
@@ -610,9 +638,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       audio.removeEventListener("canplay", onCanPlay);
       audio.removeEventListener("play", onPlay);
       audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("error", onError);
       audio.removeEventListener("ended", onEnded);
     };
-  }, [next, reportHistory]);
+  }, [next, reportHistory, ytFallback]);
 
   /** State reported by the YouTube IFrame engine → shared player state. */
   const onYouTubeStateChange = React.useCallback((state: YouTubeEngineState) => {
@@ -753,10 +782,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <PlayerContext.Provider value={value}>
-      <audio ref={audioRef} preload="none" className="hidden" />
+      {/*
+        The element is keyed on the fallback mode so a YouTube stream failure
+        remounts it fresh: `createMediaElementSource` permanently reroutes an
+        element's output, so the old element can't be reused for later tracks.
+      */}
+      <audio key={ytFallback ? "yt-fallback" : "native"} ref={audioRef} preload="none" className="hidden" />
       <YouTubeEngine
         ref={youtubeRef}
-        videoId={isYouTubeTrack ? (currentTrack?.videoId ?? null) : null}
+        videoId={ytFallback && isYouTubeTrack ? (currentTrack?.videoId ?? null) : null}
         volume={volume}
         muted={muted}
         onStateChange={onYouTubeStateChange}

@@ -8,6 +8,7 @@ import {
   getAvailableProject,
   getQuotaStatus,
   hasProjects,
+  markProjectExhausted,
   recordUsage,
   type OpType,
 } from "@/lib/youtube-pool";
@@ -481,7 +482,7 @@ interface GoogleApiError extends Error {
  * Fetch a YouTube Data API page, drawing the API key from the least-loaded
  * project in the pool for `op`. Records quota usage + an `api_call_log` row on a
  * successful call. Returns null when the pool is exhausted, the key is missing,
- * the request errors, or YouTube answers 403 (quotaExceeded / suspended project).
+ * the request errors, or YouTube answers a quota/rate rejection (403 / 429).
  */
 async function ytGet<T>(path: string, params: Record<string, string>, op: OpType): Promise<T | null> {
   const project = await getAvailableProject(op);
@@ -515,11 +516,14 @@ async function ytGet<T>(path: string, params: Record<string, string>, op: OpType
     } catch {
       /* non-JSON error body */
     }
-    if (res.status === 403) {
-      // Project likely suspended or quotaExceeded — log and skip; the router's
-      // counter already reflects today's burn, and future calls will round-robin
-      // to another project automatically.
-      console.warn(`[youtube] project ${project.id} rejected (${err.reason ?? "quotaExceeded"}): ${err.message}`);
+    if (res.status === 403 || res.status === 429) {
+      // Project suspended or quota/rate-exceeded. Charge the remaining headroom
+      // so the router rotates to the next healthy project instead of retrying
+      // one that's already spent for the day.
+      await markProjectExhausted(project.id, op);
+      console.warn(
+        `[youtube] project ${project.id} rejected (${err.reason ?? `HTTP ${res.status}`}) — marked exhausted for today: ${err.message}`,
+      );
     } else {
       console.error(`[youtube] ${err.message} (${err.reason ?? "unknown reason"})`);
     }

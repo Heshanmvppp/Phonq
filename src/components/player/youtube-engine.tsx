@@ -3,11 +3,14 @@
 import * as React from "react";
 
 /**
- * YouTube IFrame Player engine for hybrid playback.
+ * YouTube IFrame Player engine — fallback playback for hybrid tracks.
  *
- * Jamendo tracks play through the native `<audio>` element (owned by
- * `PlayerProvider`); YouTube-sourced tracks (genre-gap fill) have no direct
- * stream, so they play through the official YouTube IFrame Player API.
+ * Jamendo tracks (and most YouTube-sourced tracks) play through the native
+ * `<audio>` element owned by `PlayerProvider`; YouTube tracks normally stream
+ * through our same-origin `/api/youtube/stream` proxy so the Web Audio analyser
+ * can read them. When that stream can't be extracted, `PlayerProvider` flips
+ * into fallback mode and this engine plays the video through the official
+ * YouTube IFrame Player API instead.
  *
  * YouTube requires the player element to be technically present and ≥ 200×200px
  * — it cannot be hidden with `display:none` or 0×0 dimensions (ToS). We render

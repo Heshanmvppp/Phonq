@@ -442,6 +442,17 @@ describe("artist & album pages", () => {
       expect(artist?.nbAlbums).toBe(1);
     });
 
+    it("aggregates a static-snapshot artist when live API and DB are both down", async () => {
+      vi.mocked(jamendo.fetchArtist).mockRejectedValue(new Error("down"));
+      mocks.prisma.cachedTrack.findMany.mockRejectedValue(new Error("no database"));
+
+      const artist = await fetchArtist("artist-noonday-sun");
+      expect(artist).not.toBeNull();
+      expect(artist?.name).toBe("Noonday Sun");
+      expect(artist?.nbTracks).toBeGreaterThan(0);
+      expect(artist?.nbAlbums).toBeGreaterThan(0);
+    });
+
     it("returns null for non-Jamendo (YouTube) artist ids", async () => {
       expect(await fetchArtist("yt:chan")).toBeNull();
     });
@@ -493,6 +504,17 @@ describe("artist & album pages", () => {
       // Earliest release date of the album's members wins.
       expect(album?.releaseDate).toBe("2024-01-01");
       expect(album?.image).toBe("img");
+    });
+
+    it("builds album metadata from the static snapshot when live and DB are both down", async () => {
+      vi.mocked(jamendo.fetchAlbum).mockRejectedValue(new Error("down"));
+      vi.mocked(jamendo.fetchTracksByAlbum).mockRejectedValue(new Error("down"));
+      mocks.prisma.cachedTrack.findMany.mockRejectedValue(new Error("no database"));
+
+      const album = await fetchAlbum("376182");
+      expect(album).not.toBeNull();
+      expect(album?.nbTracks).toBeGreaterThan(0);
+      expect(album?.artistName).toBe("Noonday Sun");
     });
 
     it("fetchAlbumTracks dedupes and slices to the requested limit from the cache", async () => {

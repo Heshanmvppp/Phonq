@@ -30,8 +30,8 @@ async function main(): Promise<void> {
   if (!hasProjects()) {
     console.error(
       "sync:youtube needs YouTube API keys. Set YOUTUBE_API_KEYS (comma-separated\n" +
-        "list of up to 10 GCP service-account keys). The first YOUTUBE_SEARCH_PROJECTS\n" +
-        "(default 2) back live search; the remaining keys backfill playlists.",
+        "list of up to 10 GCP service-account keys). All keys serve live searches;\n" +
+        "setting YOUTUBE_SEARCH_PROJECTS=N reserves the first N for search only.",
     );
     process.exit(1);
   }

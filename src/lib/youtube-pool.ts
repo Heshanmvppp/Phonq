@@ -13,12 +13,16 @@ import ytRedis from "@/lib/yt-redis";
  * same burn and the router never silently over-spends a suspended project.
  *
  * Allocation:
- *   - `YOUTUBE_SEARCH_PROJECTS` keys (default 2) are reserved for *live* user
- *     searches (search.list = 100 units → ~200 searches/day from the reserved
- *     slice alone). `resolveSongVideo` always draws from this slice.
- *   - The remaining keys serve cheap 1-unit ops (videos.list batched ×50,
- *     playlistItems.list, channels.list) used by nightly seeding + metadata
- *     refresh.
+ *   - Every configured key serves live `search.list` queries (search.list = 100
+ *     units). A full 10-key pool therefore budgets ~1,000 live searches/day.
+ *     `getAvailableProject` picks the least-loaded key, and a key that YouTube
+ *     rejects (403/429) is charged to its limit via `markProjectExhausted` so
+ *     the pool rotates around it instead of hammering a broken key.
+ *   - Cheap 1-unit ops (videos.list batched ×50, playlistItems.list,
+ *     channels.list) draw from the whole pool too — 100 units of search equals
+ *     100 cheap ops, so a nightly seeding run can't meaningfully starve search.
+ *   - Setting `YOUTUBE_SEARCH_PROJECTS` to N>0 restores the old split: the first
+ *     N keys are reserved for live searches, the rest back the cheap ops only.
  *
  * When Redis is down, counters fall back to the in-memory shim in `yt-redis`,
  * and `recordApiCall` still writes to Postgres — so the per-project ledger is
@@ -49,8 +53,14 @@ export interface Project {
 /** Per-project daily quota (YouTube free tier ≈ 10,000 units/day × 10 projects). */
 const DEFAULT_DAILY_LIMIT = 10000;
 
-/** Keys reserved for live `search.list` queries (the expensive op). */
-export const SEARCH_PROJECT_SLOT = Math.max(1, Number(process.env.YOUTUBE_SEARCH_PROJECTS) || 2);
+/**
+ * Number of keys reserved for live `search.list` queries (the expensive op).
+ * Default 0 reserves none — every configured key contributes to the search
+ * budget, so a full 10-key pool yields ~1,000 live searches/day. Set
+ * `YOUTUBE_SEARCH_PROJECTS` to N>0 to carve out a dedicated search slice and
+ * leave the rest for cheap 1-unit ops only.
+ */
+export const SEARCH_PROJECT_SLOT = Math.max(0, Number(process.env.YOUTUBE_SEARCH_PROJECTS) || 0);
 
 function readKeys(): string[] {
   const multi = (process.env.YOUTUBE_API_KEYS ?? "")
@@ -91,8 +101,11 @@ export function searchProjectSlot(): number {
   return Math.min(SEARCH_PROJECT_SLOT, Math.max(0, projects().length));
 }
 
+/** Projects eligible for live `search.list` — the whole pool by default, or the
+ * reserved slice when `YOUTUBE_SEARCH_PROJECTS` is set. */
 export function searchProjects(): Project[] {
-  return projects().slice(0, searchProjectSlot());
+  const reserved = searchProjectSlot();
+  return reserved > 0 ? projects().slice(0, reserved) : projects();
 }
 
 export function playbackProjects(): Project[] {
@@ -124,7 +137,9 @@ export async function usage(projectId: number, op: OpType): Promise<number> {
 /**
  * Pick the least-loaded project that still has room for `op`, or null when the
  * pool is exhausted. Reads today's per-project counter and applies a small
- * safety margin so a 403 `quotaExceeded` never stalls the last slot.
+ * safety margin so a quota rejection (403/429) never stalls the last slot.
+ * `markProjectExhausted` charges a rejected project's headroom so this helper
+ * stops selecting it for the rest of the day.
  */
 export async function getAvailableProject(op: OpType): Promise<Project | null> {
   const pool = op === "search" ? searchProjects() : playbackProjects();
@@ -136,6 +151,24 @@ export async function getAvailableProject(op: OpType): Promise<Project | null> {
     .filter(({ p, used }) => used + cost <= p.dailyLimit - margin)
     .sort((a, b) => a.used - b.used);
   return usable[0]?.p ?? null;
+}
+
+/**
+ * Mark a project as exhausted for `op` for the rest of the day after YouTube
+ * answers with a quota/rate rejection (403 or 429). Charges the remaining
+ * headroom so `getAvailableProject` stops selecting it and the pool rotates to
+ * the next healthy project. Quota-exceeded responses never reach `recordUsage`
+ * (usage is only charged on success), so without this the exhausted project
+ * keeps winning the "least loaded" race and every call errors all day.
+ */
+export async function markProjectExhausted(projectId: number, op: OpType): Promise<void> {
+  const target = projects()[projectId];
+  if (!target) return;
+  const used = await usage(projectId, op);
+  const remaining = Math.max(0, target.dailyLimit - used);
+  if (remaining > 0) {
+    await ytRedis.incrCounter(counterKey(projectId, op), remaining, 24 * 60 * 60);
+  }
 }
 
 /** Atomically charge a project/op for a unit cost after a real API call. */

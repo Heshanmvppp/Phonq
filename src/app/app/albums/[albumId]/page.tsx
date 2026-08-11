@@ -9,14 +9,13 @@ import { Calendar, Music2 } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { fetchAlbum, fetchAlbumTracks } from "@/lib/catalog";
-import { isJamendoArtistId } from "@/lib/catalog";
 
 import { AlbumPlayAll } from "./album-play-all";
 import { TrackRow } from "@/components/track/track-row";
 import { SectionHeading } from "@/components/marketing/section-heading";
 import { EmptyState } from "@/components/ui/empty-state";
 import { RowListSkeleton } from "@/components/layout/skeletons";
-import { formatDuration, dateString, formatNumber } from "@/lib/utils";
+import { formatDuration, dateString, formatNumber, getArtistHref } from "@/lib/utils";
 
 interface AlbumPageProps {
   params: Promise<{ albumId: string }>;
@@ -67,7 +66,7 @@ export default async function AlbumPage({ params }: AlbumPageProps) {
           <h1 className="mt-1 font-display text-3xl font-bold tracking-tight sm:text-4xl">{album.name}</h1>
 
           {album.artistName ? (
-            isJamendoArtistId(album.artistId) ? (
+            getArtistHref(album.artistId, album.artistName) ? (
               <Link href={`/app/artists/${album.artistId}`} className="mt-2 block text-lg text-muted-foreground hover:text-foreground hover:underline">
                 {album.artistName}
               </Link>

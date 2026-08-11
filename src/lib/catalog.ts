@@ -920,9 +920,33 @@ async function aggregateArtistFromTracks(id: string, name: string): Promise<Arti
   };
 }
 
+/** Build an `Artist` from the static snapshot by matching the (possibly
+ * synthetic) artist id or artist name. Used when the live API and the DB cache
+ * are both unavailable — the last rung of the artist-page ladder. */
+async function aggregateArtistFromStatic(id: string, name: string): Promise<Artist | null> {
+  const rows = staticTracks.filter((t) => t.artistId === id || (name && t.artistName === name));
+  if (rows.length === 0) return null;
+  const image = rows.find((t) => t.image ?? t.imageSmall) ?? null;
+  const pic = image ? (image.image ?? image.imageSmall) : null;
+  const albumIds = new Set(rows.filter((t) => t.albumId).map((t) => t.albumId));
+  return {
+    id,
+    name: rows[0].artistName || name || "Unknown Artist",
+    image: pic,
+    imageSmall: pic,
+    website: null,
+    location: null,
+    joindate: null,
+    nbTracks: rows.length,
+    nbAlbums: albumIds.size,
+    nbFans: null,
+    bio: null,
+  };
+}
+
 /** Fetch a single artist, with the live → DB → static failure ladder. */
 export async function fetchArtist(id: string): Promise<Artist | null> {
-  if (!id || !isJamendoArtistId(id)) return null;
+  if (!id || id.startsWith("yt:")) return null;
 
   try {
     const artist = await jamendo.fetchArtist(id);
@@ -930,7 +954,9 @@ export async function fetchArtist(id: string): Promise<Artist | null> {
     return artist; // may be null (genuinely not found upstream)
   } catch (err) {
     await writeFailureStatus(err);
-    return aggregateArtistFromTracks(id, "");
+    const fromDb = await aggregateArtistFromTracks(id, "");
+    if (fromDb) return fromDb;
+    return aggregateArtistFromStatic(id, "");
   }
 }
 
@@ -1010,7 +1036,7 @@ export async function fetchSimilarArtists(
     for (const t of subs) {
       const isTarget = (artistName ? t.artistName === artistName : false) || t.artistId === artistId;
       if (isTarget) continue;
-      if (!t.artistId || !isJamendoArtistId(t.artistId)) continue;
+      if (!t.artistId || t.artistId.startsWith("yt:")) continue;
       const key = `${t.artistId}:${t.artistName}`;
       if (seen.has(key)) {
         const existing = scored.get(key);
@@ -1112,7 +1138,7 @@ async function fetchAlbumFromTracks(albumId: string): Promise<Album | null> {
     };
   }
 
-  const valid = tracks.filter((t) => t.albumId === albumId && t.albumName);
+  const valid = tracks.filter((t) => t.albumId === albumId);
   if (valid.length === 0) return null;
   const image = valid.find((t) => t.image ?? t.imageSmall) ?? null;
   const releases = valid
@@ -1121,7 +1147,7 @@ async function fetchAlbumFromTracks(albumId: string): Promise<Album | null> {
     .sort();
   return {
     id: albumId,
-    name: valid[0].albumName,
+    name: valid[0].albumName || `Album ${albumId}`,
     artistId: valid[0].artistId,
     artistName: valid[0].artistName,
     image: image ? (image.image ?? image.imageSmall ?? null) : null,
@@ -1154,7 +1180,7 @@ export function groupTracksByAlbum(tracks: Track[]): AlbumGroup[] {
     groups.push({
       album: {
         id: albumId,
-        name: albumTracks[0].albumName || "Unknown Album",
+        name: albumTracks[0].albumName || `Album ${albumId}`,
         artistId: albumTracks[0].artistId || "",
         artistName: albumTracks[0].artistName,
         image: image ? (image.image ?? image.imageSmall ?? null) : null,

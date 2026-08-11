@@ -5,6 +5,7 @@ type Proj = { id: number; apiKey: string; dailyLimit: number };
 const poolMock = vi.hoisted(() => ({
   hasProjects: vi.fn(() => true),
   getAvailableProject: vi.fn(async (): Promise<Proj | null> => ({ id: 0, apiKey: "test-key", dailyLimit: 10000 })),
+  markProjectExhausted: vi.fn(async () => {}),
   recordUsage: vi.fn(async () => {}),
   UNIT_COST: { search: 100, playback: 1 },
   dailySearchBudget: vi.fn(() => 100),
@@ -345,6 +346,57 @@ describe("fetchGenreVideos", () => {
     const videos = await fetchQueryVideos("Brodyaga Funk", 12, "brazilian");
     expect(videos).toHaveLength(0);
     expect(dbMock.upsertSong).not.toHaveBeenCalled();
+  });
+
+  it("marks the project exhausted on a 429 rate-limit rejection", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ error: { message: "Quota exceeded for quota metric 'Search Queries' and limit 'Search Queries per day'", reason: "quotaExceeded" } }),
+          { status: 429, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const videos = await fetchQueryVideos("Rate Limited", 12, "brazilian");
+    expect(videos).toHaveLength(0);
+    expect(dbMock.upsertSong).not.toHaveBeenCalled();
+    // The router charges the project's headroom so the next request rotates
+    // away instead of hammering the same exhausted key all day.
+    expect(poolMock.markProjectExhausted).toHaveBeenCalledWith(0, "search");
+  });
+
+  it("marks the project exhausted on a 403 quotaExceeded rejection", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ error: { message: "Quota exceeded", reason: "quotaExceeded" } }),
+          { status: 403, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const videos = await fetchGenreVideos("fill-quota-403", ["Phonk"], 12);
+    expect(videos).toHaveLength(0);
+    expect(poolMock.markProjectExhausted).toHaveBeenCalledWith(0, "search");
+  });
+
+  it("logs an error (but does not exhaust the project) on a non-quota 500", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { message: "Backend failure", reason: "backendError" } }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const videos = await fetchGenreVideos("fill-500", ["Phonk"], 12);
+    expect(videos).toHaveLength(0);
+    expect(poolMock.markProjectExhausted).not.toHaveBeenCalled();
   });
 });
 

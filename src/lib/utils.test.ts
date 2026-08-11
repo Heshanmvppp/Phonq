@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatDuration, formatNumber, truncate, initials, reorderArray, reorderWithIndex } from "@/lib/utils";
+import { formatDuration, formatNumber, truncate, initials, reorderArray, reorderWithIndex, getArtistHref, getAlbumHref } from "@/lib/utils";
 
 describe("formatDuration", () => {
   it("formats minutes and zero-padded seconds", () => {
@@ -106,5 +106,36 @@ describe("reorderWithIndex", () => {
     const items = ["a", "b"];
     const { index } = reorderWithIndex(items, 0, 0, 0);
     expect(index).toBeUndefined();
+  });
+});
+
+describe("getArtistHref", () => {
+  it("links numeric Jamendo artist ids", () => {
+    expect(getArtistHref("123", "DJ Phantom")).toBe("/app/artists/123");
+  });
+
+  it("links synthetic static-snapshot artist ids", () => {
+    expect(getArtistHref("artist-noonday-sun", "Noonday Sun")).toBe("/app/artists/artist-noonday-sun");
+  });
+
+  it("returns null for YouTube-sourced artist ids", () => {
+    expect(getArtistHref("yt:UCE_M8A5yxnLfW0KghEeajjw", "Some Channel")).toBeNull();
+  });
+
+  it("returns null when the id or name is missing", () => {
+    expect(getArtistHref("", "DJ Phantom")).toBeNull();
+    expect(getArtistHref("123", "")).toBeNull();
+    expect(getArtistHref("not-an-artist-id", "Nope")).toBeNull();
+  });
+});
+
+describe("getAlbumHref", () => {
+  it("links numeric album ids", () => {
+    expect(getAlbumHref("376182")).toBe("/app/albums/376182");
+  });
+
+  it("returns null for unknown album ids", () => {
+    expect(getAlbumHref("")).toBeNull();
+    expect(getAlbumHref("artist-something")).toBeNull();
   });
 });

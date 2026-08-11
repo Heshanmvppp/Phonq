@@ -7,9 +7,10 @@ import Image from "next/image";
 import { Download, Music2, Pause, Play, Plus, X } from "lucide-react";
 
 import { usePlayer } from "@/components/player/player-context";
+import { AlbumLink } from "@/components/track/album-link";
 import { ArtistLink } from "@/components/track/artist-link";
 import { LikeButton } from "@/components/track/like-button";
-import { cn, canDownloadTrack, formatDuration, trackDownloadHref } from "@/lib/utils";
+import { cn, canDownloadTrack, formatDuration, getAlbumHref, trackDownloadHref } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
 
 interface TrackRowProps {
@@ -98,7 +99,20 @@ export function TrackRow({
 
       <div className="min-w-0 flex-1">
         <p className={cn("truncate text-sm font-medium", isCurrent && "text-primary")}>{track.name}</p>
-        <ArtistLink artistId={track.artistId} artistName={track.artistName} stopPropagation className="truncate text-xs text-muted-foreground" />
+        <div className="flex min-w-0 items-center gap-1.5">
+          <ArtistLink artistId={track.artistId} artistName={track.artistName} stopPropagation className="min-w-0 truncate text-xs text-muted-foreground" />
+          {getAlbumHref(track.albumId) ? (
+            <>
+              <span className="shrink-0 text-xs text-muted-foreground/50">·</span>
+              <AlbumLink
+                albumId={track.albumId}
+                albumName={track.albumName}
+                stopPropagation
+                className="min-w-0 truncate text-xs text-muted-foreground/70"
+              />
+            </>
+          ) : null}
+        </div>
       </div>
 
       {track.bpm ? <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">{track.bpm} BPM</span> : null}

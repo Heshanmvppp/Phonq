@@ -130,7 +130,7 @@ export default async function TrackPage({ params }: TrackPageProps) {
                   </Badge>
                 </a>
               )}
-              <ShareTrackButton />
+              <ShareTrackButton title={`${track.name} — ${track.artistName}`} image={track.image} />
             </div>
           </div>
         </div>

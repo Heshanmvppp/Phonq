@@ -5,12 +5,15 @@ import * as React from "react";
 import Image from "next/image";
 
 import {
+  Heart,
   ListMusic,
+  ListPlus,
   Music2,
   Pause,
   Play,
   Repeat,
   Repeat1,
+  Share2,
   Shuffle,
   SkipBack,
   SkipForward,
@@ -19,10 +22,16 @@ import {
   VolumeX,
 } from "lucide-react";
 
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+
 import { usePlayer } from "@/components/player/player-context";
 import { QueuePanel } from "@/components/player/queue-panel";
 import { Waveform } from "@/components/player/waveform";
+import { AddToPlaylistButton } from "@/components/track/add-to-playlist";
 import { LikeButton } from "@/components/track/like-button";
+import { ShareModal } from "@/components/track/share-modal";
+import { DropdownMenu } from "@/components/ui/dropdown-menu";
 import { Slider } from "@/components/ui/slider";
 import { cn, formatDuration } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
@@ -83,6 +92,7 @@ export function PlayerBar() {
   const [activeTrack, setActiveTrack] = React.useState<Track | null>(currentTrack ?? null);
   const [incomingTrack, setIncomingTrack] = React.useState<Track | null>(null);
   const [isCrossfading, setIsCrossfading] = React.useState(false);
+  const [shareOpen, setShareOpen] = React.useState(false);
 
   if ((currentTrack?.id ?? null) !== currentTrackId) {
     setCurrentTrackId(currentTrack?.id ?? null);
@@ -186,12 +196,26 @@ export function PlayerBar() {
               {incomingTrack ? <p className="absolute inset-0 truncate text-xs text-muted-foreground transition-all duration-150 translate-y-0 opacity-100">{incomingTrack.artistName}</p> : null}
             </div>
           </div>
-          <LikeButton
-            trackId={currentTrack.id}
-            initialLiked={favoriteIds.has(currentTrack.id)}
-            onLikedChange={(liked) => setFavorite(currentTrack.id, liked)}
-            className="hidden shrink-0 sm:inline-flex"
-          />
+          {/* Desktop: inline action buttons */}
+          <div className="hidden items-center gap-1 sm:flex">
+            <LikeButton
+              trackId={currentTrack.id}
+              initialLiked={favoriteIds.has(currentTrack.id)}
+              onLikedChange={(liked) => setFavorite(currentTrack.id, liked)}
+              className="shrink-0"
+            />
+            {activeTrack && (
+              <AddToPlaylistButton trackId={activeTrack.id} />
+            )}
+            <button
+              type="button"
+              onClick={() => setShareOpen(true)}
+              className="inline-flex items-center justify-center rounded-full p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+              aria-label="Share"
+            >
+              <Share2 className="size-4" />
+            </button>
+          </div>
         </div>
 
         {/* Center: controls + progress */}
@@ -265,7 +289,7 @@ export function PlayerBar() {
           </div>
         </div>
 
-        {/* Right: volume + queue */}
+        {/* Right: volume + actions + queue */}
         <div className="flex w-[30%] items-center justify-end gap-1.5 sm:gap-3">
           <div
             ref={volumeRef}
@@ -294,6 +318,40 @@ export function PlayerBar() {
               </div>
             </div>
           </div>
+
+          {/* Mobile: drop-up menu with like/playlist/share */}
+          <div className="sm:hidden">
+            <DropdownMenu
+              trigger={
+                <span className={cn(iconClass, "rounded-md p-1.5")}>
+                  <Heart className={cn("size-5", favoriteIds.has(currentTrack.id) && "fill-primary text-primary")} />
+                </span>
+              }
+            >
+              <div className="max-h-64 overflow-y-auto p-1">
+                <button
+                  type="button"
+                  onClick={() => setFavorite(currentTrack.id, !favoriteIds.has(currentTrack.id))}
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-muted"
+                >
+                  <Heart className={cn("size-4", favoriteIds.has(currentTrack.id) && "fill-primary text-primary")} />
+                  {favoriteIds.has(currentTrack.id) ? "Remove from favorites" : "Add to favorites"}
+                </button>
+                {activeTrack && (
+                  <AddToPlaylistDropdownItem trackId={activeTrack.id} />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShareOpen(true)}
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-muted"
+                >
+                  <Share2 className="size-4" />
+                  Share
+                </button>
+              </div>
+            </DropdownMenu>
+          </div>
+
           <button
             type="button"
             onClick={() => setQueueOpen(true)}
@@ -307,7 +365,99 @@ export function PlayerBar() {
 
       </div>
 
+      {activeTrack && (
+        <ShareModal
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          url={`/track/${activeTrack.id}`}
+          title={`${activeTrack.name} — ${activeTrack.artistName}`}
+          image={activeTrack.image}
+        />
+      )}
+
       <QueuePanel />
+    </div>
+  );
+}
+
+function AddToPlaylistDropdownItem({ trackId }: { trackId: string }) {
+  const { status } = useSession();
+  const router = useRouter();
+  const [playlists, setPlaylists] = React.useState<Array<{ id: string; name: string }>>([]);
+  const [loaded, setLoaded] = React.useState(false);
+  const [submenu, setSubmenu] = React.useState(false);
+
+  async function loadPlaylists() {
+    if (loaded) return;
+    try {
+      const res = await fetch("/api/me/playlists");
+      if (res.ok) {
+        const data = await res.json();
+        setPlaylists(data.playlists ?? []);
+        setLoaded(true);
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function addToPlaylist(playlistId: string) {
+    try {
+      const res = await fetch(`/api/me/playlists/${playlistId}/tracks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackId }),
+      });
+      if (res.ok) {
+        setSubmenu(false);
+        router.refresh();
+      }
+    } catch { /* ignore */ }
+  }
+
+  function handleClick() {
+    if (status !== "authenticated") {
+      router.push("/login");
+      return;
+    }
+    void loadPlaylists();
+    setSubmenu(true);
+  }
+
+  if (!submenu) {
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-muted"
+      >
+        <ListPlus className="size-4" />
+        Add to playlist
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-md bg-muted/50 p-1">
+      <button
+        type="button"
+        onClick={() => setSubmenu(false)}
+        className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
+        ← Back
+      </button>
+      {playlists.length > 0 ? (
+        playlists.map((pl) => (
+          <button
+            key={pl.id}
+            type="button"
+            onClick={() => addToPlaylist(pl.id)}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors hover:bg-background"
+          >
+            <span className="truncate">{pl.name}</span>
+          </button>
+        ))
+      ) : (
+        <p className="px-2.5 py-2 text-xs text-muted-foreground">{loaded ? "No playlists yet" : "Loading…"}</p>
+      )}
     </div>
   );
 }

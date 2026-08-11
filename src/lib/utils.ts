@@ -123,10 +123,12 @@ export function stripHtml(html: string | null | undefined): string {
     .trim();
 }
 
-/** Build a link to an artist's page, or null when no page exists (e.g.
- * YouTube-sourced tracks whose artist id isn't a Jamendo id). */
+/** Build a link to an artist's page, or null when no page exists. Jamendo
+ * artist ids are numeric; the static snapshot uses synthetic `artist-<slug>`
+ * ids; YouTube-sourced tracks carry `yt:` ids and have no artist page. */
 export function getArtistHref(artistId: string, artistName: string): string | null {
-  if (!artistId || !/^\d+$/.test(artistId) || !artistName) return null;
+  if (!artistId || !artistName || artistId.startsWith("yt:")) return null;
+  if (!/^\d+$/.test(artistId) && !/^artist-[\w-]+$/.test(artistId)) return null;
   return `/app/artists/${encodeURIComponent(artistId)}`;
 }
 

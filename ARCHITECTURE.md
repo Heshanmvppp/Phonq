@@ -18,9 +18,10 @@ Browser
             │     ├─ YouTube Data API v3 ── genre-gap fill via IFrame Player
             │     │     ├─ src/lib/youtube.ts ── resolve/search/cache orchestration
             │     │     ├─ src/lib/youtube-pool.ts ── **10-project quota pool router**
-            │     │     │     • first N searches (default 2) back live `search.list`
-            │     │     │     • remaining keys backfill playlists/channels (1-unit ops)
+            │     │     │     • every key serves live `search.list` (whole pool ≈ 1,000/day)
+            │     │     │     • cheap 1-unit ops (videos/playlistItems/channels) share the pool
             │     │     │     • per-project/per-op unit counters kept in Redis
+            │     │     │     • 403/429 → key charged to limit, pool rotates (markProjectExhausted)
             │     │     ├─ src/lib/yt-redis.ts ── **Redis accelerator** (Upstash REST)
             │     │     │     • `search:{q}` (24h) + `song:{videoId}` read-through (12h)
             │     │     │     • negative cache (2h), quota + `ratelimit:{bucket}:{key}` counters
@@ -103,16 +104,23 @@ reach the UI (errors are logged server-side only).
 
 ## The player (`player-context.tsx`)
 
-- One `<audio>` element for Jamendo tracks, owned by `PlayerProvider` (wrapped in the root layout).
-- A `<YouTubeEngine>` (200×200 IFrame Player, `src/components/player/youtube-engine.tsx`) handles
-  YouTube-sourced tracks (no direct stream). Its state/time is reported back into the same shared
-  player state, so the UI doesn't care which engine is playing.
+- One `<audio>` element for all tracks, owned by `PlayerProvider` (wrapped in the root layout).
+  Jamendo streams play via the `/api/audio` same-origin proxy; YouTube-sourced tracks play via the
+  `/api/youtube/stream` proxy (`src/lib/youtube-stream.ts` extracts a deciphered audio URL with
+  youtube.js — clients rotate ANDROID_VR → MWEB → WEB, with a yt-dlp `-g` fallback — then streams
+  the bytes back same-origin, forwarding Range requests so seeking works).
+- A `<YouTubeEngine>` (200×200 IFrame Player, `src/components/player/youtube-engine.tsx`) is kept as a
+  fallback only: if streaming fails, `PlayerProvider` flips into fallback mode and the video plays
+  through the IFrame API instead. Its state/time is reported back into the same shared player state,
+  so the UI doesn't care which engine is playing.
 - Queue state: `queue: Track[]`, `queueIndex`, `shuffle`, `repeat` (`off|all|one`).
 - `playTrack(track, queue?)` — plays a track with an optional queue context, so "next" works in any list.
 - **CORS probe**: before wiring the Web Audio analyser, we probe the stream origin once with a
   ranged request. If the CDN allows CORS, we connect `createMediaElementSource` → `AnalyserNode`
   and render a live waveform to a canvas. If not, playback continues with a decorative fallback.
-  (YouTube playback uses the decorative fallback — the IFrame engine has no analyser.)
+  Both proxies are same-origin, so YouTube streams feed the analyser just like Jamendo; only the
+  IFrame fallback uses the decorative waveform. A failed stream remounts the `<audio>` element
+  (keyed on fallback mode) so the dead media-source chain can't leak into later tracks.
 - **Media Session**: metadata + play/pause/next/previous handlers are registered so lock-screen
   and notification controls work on mobile.
 - **History**: on `play`, the player POSTs to `/api/me/history` once per track id.
@@ -125,6 +133,8 @@ reach the UI (errors are logged server-side only).
 | `GET /api/v1/search`           | no   | Public read-only search API (rate-limited) |
 | `GET /api/health`              | no   | Uptime check + current catalog provider |
 | `GET /api/youtube/*`           | no   | YouTube resolve / genre-fill / quota + Redis bandwidth status (rate-limited) |
+| `GET /api/youtube/stream`      | no   | Same-origin audio proxy for YouTube tracks: youtube.js/yt-dlp extraction + Range-forwarding stream (rate-limited, catalog-gated) |
+| `GET /api/download/:videoId`   | no   | Download a YouTube track as m4a via yt-dlp (rate-limited, catalog-gated) |
 | `GET /api/tracks`              | no   | Search/browse catalog (rate-limited) |
 | `GET /api/radios`              | no   | Genre radios                       |
 | `GET|POST /api/me/favorites`   | yes  | List / add favorites               |
