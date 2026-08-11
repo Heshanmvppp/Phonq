@@ -114,9 +114,9 @@ async function AlbumTracks({ albumId, likedIds }: { albumId: string; likedIds: S
   }
 
   const ordered = [...tracks].sort((a, b) => {
-    const aN = Number(a.releaseDate);
-    const bN = Number(b.releaseDate);
-    if (aN && bN) return aN - bN;
+    const aN = a.releaseDate ? Date.parse(a.releaseDate) : NaN;
+    const bN = b.releaseDate ? Date.parse(b.releaseDate) : NaN;
+    if (Number.isFinite(aN) && Number.isFinite(bN)) return aN - bN;
     return 0;
   });
 

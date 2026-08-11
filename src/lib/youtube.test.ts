@@ -23,6 +23,10 @@ const redisMock = vi.hoisted(() => ({
     ping: vi.fn(async () => "PONG"),
     configured: false,
     healthy: vi.fn(async () => false),
+    isOnline: vi.fn(() => true),
+    dbSize: vi.fn(async () => 0),
+    usage: vi.fn(async () => ({ ops: 0, readBytes: 0, writeBytes: 0, hits: 0, misses: 0 })),
+    flushUsage: vi.fn(async () => ({ ops: 0, readBytes: 0, writeBytes: 0, hits: 0, misses: 0 })),
   },
 }));
 vi.mock("@/lib/yt-redis", () => ({ default: redisMock.ytRedis, ytRedis: redisMock.ytRedis, YtRedis: class {} }));
@@ -38,6 +42,8 @@ const dbMock = vi.hoisted(() => ({
   touchLastPlayed: vi.fn(async () => {}),
   unitsUsedToday: vi.fn(async () => 0),
   recordApiCall: vi.fn(async () => {}),
+  recordBandwidth: vi.fn(async () => {}),
+  redisUsageToday: vi.fn(async () => null),
   today: vi.fn(() => "2026-08-11"),
   thumbnailFor: (id: string) => `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
   hasDedicatedCatalogDb: false,
@@ -54,6 +60,9 @@ import {
   normalizeKey,
   resolveSongVideo,
   parseTitle,
+  SEARCH_CACHE_TTL,
+  SONG_CACHE_TTL,
+  NEG_CACHE_TTL,
 } from "@/lib/youtube";
 
 describe("normalizeKey", () => {
@@ -372,6 +381,13 @@ describe("resolveSongVideo", () => {
     const video = await resolveSongVideo("Envolver", "Anitta", "brazilian");
     expect(video?.videoId).toBe("abc123");
     expect(dbMock.findSongByVideoId).toHaveBeenCalledWith("abc123");
+    // The DB-backed song warms the song:{videoId} read-through cache so the
+    // next resolve for the same id skips Postgres entirely.
+    expect(redisMock.ytRedis.cacheSet).toHaveBeenCalledWith(
+      "song:abc123",
+      expect.objectContaining({ videoId: "abc123", title: "Envolver", artistName: "Anitta" }),
+      SONG_CACHE_TTL,
+    );
     // No live search, no fuzzy lookup, no persistence.
     expect(poolMock.getAvailableProject).not.toHaveBeenCalled();
     expect(dbMock.searchSongFuzzy).not.toHaveBeenCalled();
@@ -394,7 +410,7 @@ describe("resolveSongVideo", () => {
     const video = await resolveSongVideo("Funk Banger", "Br Funk");
     expect(video?.videoId).toBe("live1");
     expect(dbMock.upsertSong).toHaveBeenCalledTimes(1);
-    expect(redisMock.ytRedis.cacheSet).toHaveBeenCalledWith(expect.stringMatching(/^search:/), "live1", 7200);
+    expect(redisMock.ytRedis.cacheSet).toHaveBeenCalledWith(expect.stringMatching(/^search:/), "live1", SEARCH_CACHE_TTL);
   });
 
   it("negative-caches the query when the pool is exhausted and no DB match exists", async () => {
@@ -402,7 +418,7 @@ describe("resolveSongVideo", () => {
 
     const video = await resolveSongVideo("Missing Song", "Nobody");
     expect(video).toBeNull();
-    expect(redisMock.ytRedis.cacheSet).toHaveBeenCalledWith(expect.stringMatching(/^neg:/), "1", 1800);
+    expect(redisMock.ytRedis.cacheSet).toHaveBeenCalledWith(expect.stringMatching(/^neg:/), "1", NEG_CACHE_TTL);
     expect(dbMock.upsertSong).not.toHaveBeenCalled();
   });
 });

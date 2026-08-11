@@ -20,6 +20,14 @@ WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000
+# ffmpeg + yt-dlp back the /api/download endpoint for YouTube-sourced tracks
+# (transcode bestaudio to m4a and stream it back). The standalone yt-dlp binary
+# bundles its own Python, so only ffmpeg comes from apt.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg curl \
+  && curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+  && chmod a+rx /usr/local/bin/yt-dlp \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next

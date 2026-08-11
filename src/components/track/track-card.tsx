@@ -12,7 +12,7 @@ import { ArtistLink } from "@/components/track/artist-link";
 import { LikeButton } from "@/components/track/like-button";
 import { ShareButton } from "@/components/track/share-button";
 import { Badge } from "@/components/ui/badge";
-import { cn, formatDuration } from "@/lib/utils";
+import { cn, canDownloadTrack, formatDuration, trackDownloadHref } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
 
 interface TrackCardProps {
@@ -47,6 +47,7 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
   const tileClass =
     "flex h-9 flex-1 items-center justify-center rounded-md border border-border/60 transition-colors";
   const actionTileClass = `${tileClass} text-muted-foreground hover:bg-muted hover:text-foreground`;
+  const downloadHref = trackDownloadHref(track);
 
   return (
     <div
@@ -109,16 +110,16 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
       </div>
 
       <div className="mt-2.5 flex items-center gap-1.5">
-        {track.audioDownloadAllowed && track.downloadUrl && (
+        {downloadHref && canDownloadTrack(track) && (
           <a
-            href={track.downloadUrl}
-            target="_blank"
-            rel="noreferrer"
+            href={downloadHref}
+            target={track.source === "youtube" ? undefined : "_blank"}
+            rel={track.source === "youtube" ? undefined : "noreferrer"}
             download
             onClick={(e) => e.stopPropagation()}
             className={actionTileClass}
             aria-label={`Download ${track.name}`}
-            title="Download (CC license)"
+            title={track.source === "youtube" ? "Download (YouTube)" : "Download (CC license)"}
           >
             <Download className="size-4" />
           </a>

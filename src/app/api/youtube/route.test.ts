@@ -48,11 +48,28 @@ describe("GET /api/youtube/:action", () => {
   });
 
   it("returns the daily search-quota status", async () => {
-    mocks.getYouTubeQuota.mockResolvedValue({ unitsUsed: 1200, searches: 12, searchesRemaining: 88, budget: 100 });
+    mocks.getYouTubeQuota.mockResolvedValue({
+      unitsUsed: 1200,
+      searches: 12,
+      searchesRemaining: 88,
+      budget: 100,
+      redis: {
+        configured: true,
+        healthy: true,
+        dbSize: 4321,
+        ops: 55,
+        readBytes: 12345,
+        writeBytes: 678,
+        hits: 40,
+        misses: 15,
+        today: null,
+      },
+    });
     const res = await GET(new Request("http://localhost/api/youtube/quota"), { params: params("quota") });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.quota).toMatchObject({ unitsUsed: 1200, searchesRemaining: 88, budget: 100 });
+    expect(body.quota.redis).toMatchObject({ configured: true, dbSize: 4321, readBytes: 12345, hits: 40 });
   });
 
   it("returns cached genre-gap fill tracks for a subgenre", async () => {

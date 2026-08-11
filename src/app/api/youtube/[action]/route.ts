@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
  * the [action] segment below rather than a shared base route.)
  */
 export async function GET(request: Request, { params }: { params: Promise<{ action: string }> }) {
-  if (!checkRateLimit(ipKey(request), 60, 60_000)) {
+  if (!(await checkRateLimit(ipKey(request), 60, 60_000))) {
     return Response.json({ error: "Too many requests, slow down" }, { status: 429 });
   }
 

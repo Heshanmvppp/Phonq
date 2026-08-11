@@ -1,6 +1,6 @@
 {
   "name": "phonq",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Phonq — a free, open-source phonk music streaming platform powered by Jamendo and Neon.",
   "type": "module",

@@ -154,13 +154,13 @@ export default function DocsPage() {
           <div>
             <p className="text-sm font-semibold">Browse</p>
             <pre className="mt-2 overflow-x-auto rounded-lg bg-muted/60 p-4 text-xs leading-relaxed text-foreground">
-{`curl "https://phonq.vercel.app/api/v1/tracks?tags=phonk&boost=popularity_week&limit=3"`}
+{`curl "${site.url}/api/v1/tracks?tags=phonk&boost=popularity_week&limit=3"`}
             </pre>
           </div>
           <div>
             <p className="text-sm font-semibold">Search</p>
             <pre className="mt-2 overflow-x-auto rounded-lg bg-muted/60 p-4 text-xs leading-relaxed text-foreground">
-{`curl "https://phonq.vercel.app/api/v1/search?q=drift&limit=5"
+{`curl "${site.url}/api/v1/search?q=drift&limit=5"
 
 → 200 { "query": "drift", "tracks": [ …Track[]… ], "count": 5, "provider": "live" }`}
             </pre>
@@ -168,7 +168,7 @@ export default function DocsPage() {
           <div>
             <p className="text-sm font-semibold">Embed a player</p>
             <pre className="mt-2 overflow-x-auto rounded-lg bg-muted/60 p-4 text-xs leading-relaxed text-foreground">
-{`<iframe src="https://phonq.vercel.app/embed/<track-id>" width="384" height="540" style="border:none" />`}
+{`<iframe src="${site.url}/embed/<track-id>" width="384" height="540" style="border:none" />`}
             </pre>
           </div>
           <p className="text-xs text-muted-foreground">

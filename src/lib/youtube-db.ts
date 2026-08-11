@@ -264,6 +264,54 @@ export async function unitsUsedToday(): Promise<number> {
   }
 }
 
+export interface BandwidthUsage {
+  ops: number;
+  readBytes: number;
+  writeBytes: number;
+  hits: number;
+  misses: number;
+}
+
+/** Accumulate the in-process Redis bandwidth meter into today's ledger row
+ * (incrementing, so multiple flushes within a day add up). Best-effort — never
+ * breaks the catalog path. */
+export async function recordBandwidth(usage: BandwidthUsage): Promise<void> {
+  if (!usage || usage.ops <= 0) return;
+  try {
+    const d = today();
+    await ytDb.redisUsageLog.upsert({
+      where: { date: d },
+      create: { date: d, ...usage },
+      update: {
+        ops: { increment: usage.ops },
+        readBytes: { increment: usage.readBytes },
+        writeBytes: { increment: usage.writeBytes },
+        hits: { increment: usage.hits },
+        misses: { increment: usage.misses },
+      },
+    });
+  } catch (err) {
+    console.warn(`[yt-db] redis_usage_log: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/** Today's accumulated Redis usage ledger row (null when nothing recorded). */
+export async function redisUsageToday(): Promise<BandwidthUsage | null> {
+  try {
+    const row = await ytDb.redisUsageLog.findUnique({ where: { date: today() } });
+    if (!row) return null;
+    return {
+      ops: row.ops,
+      readBytes: Number(row.readBytes),
+      writeBytes: Number(row.writeBytes),
+      hits: row.hits,
+      misses: row.misses,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Touches `last_played_at` for a song — drives the pruning job's freshness. */
 export async function touchLastPlayed(videoId: string): Promise<void> {
   try {

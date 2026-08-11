@@ -17,6 +17,7 @@ import {
   findSongsByGenre,
   findSongsByIds,
   findAllSongs,
+  redisUsageToday,
   searchSongFuzzy,
   thumbnailFor,
   touchLastPlayed,
@@ -40,10 +41,11 @@ import {
  *     Usage is metered in Redis (`quota:{project}:{opType}:{date}`, 24h TTL) and
  *     the router always picks the least-loaded project under its cap.
  *
- *   Layer 2 — Redis accelerator (`yt-redis`). `search:{query} → videoId` hot
- *     cache (1-2h) and `neg:{query}` (30m "nothing good") skip both the DB and
- *     the API. Counters + per-project ledger are best-effort; Redis down ⇒
- *     transparent fall-through to Postgres.
+ *   Layer 2 — Redis accelerator (`yt-redis`). `search:{query} → videoId` cache
+ *     (24h), a `song:{videoId}` metadata read-through (12h), and `neg:{query}`
+ *     (2h "nothing good") skip both the DB and the API on hot lookups.
+ *     Counters + the bandwidth meter are best-effort; Redis down ⇒ transparent
+ *     fall-through to Postgres.
  *
  *   Layer 3 — the `songs` store (`youtube-db`). Lean catalog (no thumbnail URLs,
  *     no raw API dumps), in a dedicated Neon DB when `YOUTUBE_DATABASE_URL` is
@@ -60,6 +62,80 @@ export const YOUTUBE_BASE_URL = "https://www.googleapis.com/youtube/v3";
 export const SEARCH_UNITS = 100;
 /** `videoCategoryId=10` is Music; strips non-music uploads at the query level. */
 export const VIDEO_CATEGORY_MUSIC = "10";
+
+/* ------------------------------------------------------------------ */
+/* Redis cache TTLs (env-overridable)                                  */
+/*                                                                     */
+/* With a 200 MB budget (maxmemory 200mb, allkeys-lru) the accelerator  */
+/* holds the hot-lookup keys for the whole catalog, not a thin slice:  */
+/*   search:{query} → video_id    TTL 24h (default)                    */
+/*   song:{video_id} → JSON        TTL 12h (read-through)              */
+/*   neg:{query}      → "1"        TTL 2h  (negative cache)            */
+/*   quota:...        → counter    TTL 24h                             */
+/* ------------------------------------------------------------------ */
+function ttlFromEnv(name: string, fallbackSec: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallbackSec;
+}
+/** How long a resolved `search:{query} → video_id` mapping is trusted. */
+export const SEARCH_CACHE_TTL = ttlFromEnv("YOUTUBE_REDIS_SEARCH_TTL", 24 * 3600);
+/** How long a `song:{video_id}` read-through entry stays warm. */
+export const SONG_CACHE_TTL = ttlFromEnv("YOUTUBE_REDIS_SONG_TTL", 12 * 3600);
+/** How long a known-bad query is held in the negative cache. */
+export const NEG_CACHE_TTL = ttlFromEnv("YOUTUBE_REDIS_NEG_TTL", 2 * 3600);
+
+/** Payload stored under `song:{video_id}` — small JSON (no thumbnail URL,
+ * reconstructed on read from the id), ~150-250 bytes per entry. */
+interface SongCachePayload {
+  videoId: string;
+  title: string;
+  artistName: string;
+  duration: number;
+  channelId: string | null;
+  channelTitle: string | null;
+  embeddable: boolean;
+  subgenre: string | null;
+  source: string;
+}
+
+function songCacheKey(videoId: string): string {
+  return `song:${videoId}`;
+}
+
+/** Read a song's metadata from the `song:{videoId}` read-through cache. */
+async function cacheGetSong(videoId: string): Promise<YouTubeVideo | null> {
+  if (!videoId) return null;
+  const payload = await ytRedis.cacheGet<SongCachePayload>(songCacheKey(videoId));
+  if (!payload) return null;
+  return {
+    videoId: payload.videoId,
+    title: payload.title,
+    artistName: payload.artistName,
+    duration: payload.duration,
+    thumbnail: thumbnailFor(payload.videoId),
+    channelId: payload.channelId,
+    channelTitle: payload.channelTitle,
+    embeddable: payload.embeddable,
+    subgenre: payload.subgenre,
+    source: payload.source,
+  };
+}
+
+/** Warm the `song:{videoId}` read-through cache (best-effort, fire-and-forget). */
+function cacheSetSong(video: YouTubeVideo): void {
+  const payload: SongCachePayload = {
+    videoId: video.videoId,
+    title: video.title,
+    artistName: video.artistName,
+    duration: video.duration,
+    channelId: video.channelId,
+    channelTitle: video.channelTitle,
+    embeddable: video.embeddable,
+    subgenre: video.subgenre,
+    source: video.source,
+  };
+  void ytRedis.cacheSet(songCacheKey(video.videoId), payload, SONG_CACHE_TTL);
+}
 
 /**
  * Near-disqualifying title/branding signals (case-insensitive). Word-boundary
@@ -133,6 +209,29 @@ export interface YouTubeQuotaStatus {
   }>;
   /** True when at least one API key is configured. */
   configured: boolean;
+  /** Redis accelerator capacity + bandwidth since the last flush. */
+  redis?: {
+    /** True when an Upstash REST endpoint is configured. */
+    configured: boolean;
+    /** True when the backing Redis answered a ping. */
+    healthy: boolean;
+    /** Number of keys stored (DBSIZE). */
+    dbSize: number;
+    /** In-process meter since the last flush (approx bytes). */
+    ops: number;
+    readBytes: number;
+    writeBytes: number;
+    hits: number;
+    misses: number;
+    /** Today's persisted ledger row (`redis_usage_log`), null when none. */
+    today: {
+      ops: number;
+      readBytes: number;
+      writeBytes: number;
+      hits: number;
+      misses: number;
+    } | null;
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -253,7 +352,7 @@ async function channelStats(ids: string[]): Promise<Map<string, ChannelStats>> {
   const out = new Map<string, ChannelStats>();
   if (unique.length === 0) return out;
   for (let i = 0; i < unique.length; i += 50) {
-    const chunk = unique.slice(i, 50);
+    const chunk = unique.slice(i, i + 50);
     const data = await ytGet<ChannelResponse>("channels", { part: "snippet,statistics", id: chunk.join(",") }, "playback");
     for (const item of data?.items ?? []) {
       if (!item.id) continue;
@@ -484,7 +583,7 @@ async function videosList(ids: string[]): Promise<YouTubeVideo[]> {
   if (unique.length === 0) return [];
   const out: YouTubeVideo[] = [];
   for (let i = 0; i < unique.length; i += 50) {
-    const chunk = unique.slice(i, 50);
+    const chunk = unique.slice(i, i + 50);
     const data = await ytGet<VideosResponse>("videos", { part: "snippet,contentDetails,status,topicDetails", id: chunk.join(",") }, "playback");
     if (!data?.items) continue;
     for (const item of data.items) {
@@ -514,9 +613,11 @@ function toSongInput(video: YouTubeVideo, qualityScore: number): SongInput {
   };
 }
 
-/** Persist a resolved/seeded video into the `songs` catalog (best-effort). */
+/** Persist a resolved/seeded video into the `songs` catalog (best-effort) and
+ * warm the `song:{videoId}` read-through cache so later resolves skip Postgres. */
 async function persistSong(video: YouTubeVideo, qualityScore: number): Promise<void> {
   await upsertSong(toSongInput(video, qualityScore));
+  cacheSetSong(video);
 }
 
 /* ------------------------------------------------------------------ */
@@ -612,15 +713,17 @@ async function searchAndCache(
  * Resolve a song (title + artist) to a YouTube video.
  *
  * Lookup ladder (Redis → Postgres trigram → pooled live search):
- *   1. Redis `search:{query}` hot cache → video id, backed by the `songs` row.
+ *   1. Redis `search:{query}` hot cache (24h) → video id, then the
+ *      `song:{videoId}` read-through cache (12h) → metadata without touching
+ *      Postgres. Cold song entries fall back to the `songs` row and re-warm.
  *   2. Postgres trigram match on `songs` (artist/title `gin_trgm`).
  *   3. `search.list` via `getAvailableProject('search')` — 100 units, budget
- *      gated, winner persisted so the next lookup is a free cache read.
+ *      gated, winner persisted + cached so the next lookup is a free read.
  *
- * A negative cache (`neg:`) holds known-bad queries for 30 min so a missing
- * song is never re-searched. Pool exhaustion falls through to the Postgres
- * fuzzy match (and the query is effectively queued for the next nightly seed);
- * the function never throws.
+ * A negative cache (`neg:`) holds known-bad queries for 2h so a missing song is
+ * never re-searched. Pool exhaustion falls through to the Postgres fuzzy match
+ * (and the query is effectively queued for the next nightly seed); the function
+ * never throws.
  */
 export async function resolveSongVideo(
   songTitle: string,
@@ -634,14 +737,21 @@ export async function resolveSongVideo(
   const artistKey = normalizeKey(artistName);
   const cacheKey = `search:${artistKey ? `${artistKey}|${songKey}` : songKey}`;
 
-  // 0. Negative cache — avoid re-searching known-bad queries for 30 min.
+  // 0. Negative cache — avoid re-searching known-bad queries for 2h.
   if (await ytRedis.cacheGet(`neg:${cacheKey}`)) return null;
 
-  // 1. Redis hot cache (1-2h) → video id → DB-backed song.
+  // 1. Redis hot cache (24h) → video id → song metadata via the `song:{videoId}`
+  //    read-through cache; Postgres only on a cold entry.
   const cachedId = await ytRedis.cacheGet<string>(cacheKey);
   if (cachedId) {
+    const cachedSong = await cacheGetSong(cachedId);
+    if (cachedSong?.embeddable) {
+      void touchLastPlayed(cachedSong.videoId);
+      return cachedSong;
+    }
     const song = await findSongByVideoId(cachedId);
     if (song?.embeddable) {
+      cacheSetSong(song);
       void touchLastPlayed(song.videoId);
       return song;
     }
@@ -652,7 +762,8 @@ export async function resolveSongVideo(
   const fuzzy = await searchSongFuzzy(songKey, artistKey, 1);
   if (fuzzy && fuzzy.length && fuzzy[0].embeddable) {
     const song = fuzzy[0];
-    void ytRedis.cacheSet(cacheKey, song.videoId, 2 * 3600);
+    void ytRedis.cacheSet(cacheKey, song.videoId, SEARCH_CACHE_TTL);
+    cacheSetSong(song);
     void touchLastPlayed(song.videoId);
     return song;
   }
@@ -663,13 +774,13 @@ export async function resolveSongVideo(
 
   const video = await searchAndCache(songTitle, artistName, subgenre);
   if (video) {
-    void ytRedis.cacheSet(cacheKey, video.videoId, 2 * 3600);
+    void ytRedis.cacheSet(cacheKey, video.videoId, SEARCH_CACHE_TTL);
     void touchLastPlayed(video.videoId);
     return video;
   }
 
-  // 4. Nothing good — negative-cache so this query isn't retried for 30 min.
-  void ytRedis.cacheSet(`neg:${cacheKey}`, "1", 30 * 60);
+  // 4. Nothing good — negative-cache so this query isn't retried for 2h.
+  void ytRedis.cacheSet(`neg:${cacheKey}`, "1", NEG_CACHE_TTL);
   return null;
 }
 
@@ -903,7 +1014,7 @@ export async function seedFromPlaylist(
     count += ids.length;
     // Fetch fresh metadata in batches of 50 (1 unit each).
     for (let i = 0; i < ids.length; i += 50) {
-      const chunk = ids.slice(i, 50);
+      const chunk = ids.slice(i, i + 50);
       const metas = await videosList(chunk);
       for (const video of metas) {
         const track: YouTubeVideo = {
@@ -942,9 +1053,12 @@ export async function fetchAllCachedVideos(limit = 100): Promise<YouTubeVideo[]>
   return findAllSongs(limit);
 }
 
-/** Cached YouTube songs by their raw video ids (no API calls — DB only). */
+/** Cached YouTube songs by their raw video ids (no API calls — DB only, with
+ * the `song:{videoId}` read-through cache warmed for later single lookups). */
 export async function fetchVideosByIds(videoIds: string[]): Promise<YouTubeVideo[]> {
-  return findSongsByIds(videoIds);
+  const songs = await findSongsByIds(videoIds);
+  for (const song of songs) cacheSetSong(song);
+  return songs;
 }
 
 /* ------------------------------------------------------------------ */
@@ -955,10 +1069,20 @@ export async function fetchVideosByIds(videoIds: string[]): Promise<YouTubeVideo
  * Aggregate daily quota status across the whole project pool. Uses the Redis
  * counters when available, and falls back to summing today's `api_call_log`
  * rows from Postgres when Redis is down — so the health surface never blanks
- * out just because the cache layer is unavailable.
+ * out just because the cache layer is unavailable. Also reports Redis
+ * capacity (DBSIZE) and the bandwidth ledger so a runaway cache job shows up
+ * before the monthly egress budget is silently spent.
  */
 export async function getYouTubeQuotaStatus(): Promise<YouTubeQuotaStatus> {
   const budget = dailySearchBudget();
+
+  const [healthy, dbSize, meter, persistedToday] = await Promise.all([
+    ytRedis.healthy(),
+    ytRedis.dbSize(),
+    ytRedis.usage(),
+    redisUsageToday().catch(() => null),
+  ]);
+
   try {
     const pool = await getQuotaStatus();
     const searches = pool.searches;
@@ -969,6 +1093,17 @@ export async function getYouTubeQuotaStatus(): Promise<YouTubeQuotaStatus> {
       budget,
       projects: pool.projects,
       configured: pool.configured,
+      redis: {
+        configured: ytRedis.configured,
+        healthy,
+        dbSize,
+        ops: meter.ops,
+        readBytes: meter.readBytes,
+        writeBytes: meter.writeBytes,
+        hits: meter.hits,
+        misses: meter.misses,
+        today: persistedToday,
+      },
     };
   } catch {
     // Redis + pool unavailable — fall back to the Postgres call log.
@@ -981,6 +1116,17 @@ export async function getYouTubeQuotaStatus(): Promise<YouTubeQuotaStatus> {
       budget,
       projects: [],
       configured: false,
+      redis: {
+        configured: ytRedis.configured,
+        healthy,
+        dbSize,
+        ops: meter.ops,
+        readBytes: meter.readBytes,
+        writeBytes: meter.writeBytes,
+        hits: meter.hits,
+        misses: meter.misses,
+        today: persistedToday,
+      },
     };
   }
 }

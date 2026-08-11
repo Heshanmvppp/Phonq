@@ -22,11 +22,13 @@ Browser
             │     │     │     • remaining keys backfill playlists/channels (1-unit ops)
             │     │     │     • per-project/per-op unit counters kept in Redis
             │     │     ├─ src/lib/yt-redis.ts ── **Redis accelerator** (Upstash REST)
-            │     │     │     • hot `search:{q}` lookups + negative cache + pool counters
+            │     │     │     • `search:{q}` (24h) + `song:{videoId}` read-through (12h)
+            │     │     │     • negative cache (2h), quota + `ratelimit:{bucket}:{key}` counters
+            │     │     │     • in-process bandwidth meter → `redis_usage_log` (daily)
             │     │     │     • optional: degrades to Postgres when absent, to in-memory in dev
             │     │     └─ src/lib/youtube-db.ts ── Prisma client
             │     │           • main app DB (shared) OR dedicated Neon `YOUTUBE_DATABASE_URL`
-            │     │           • `songs` (lean catalog), `api_call_log` (daily burn-rate ledger)
+            │     │           • `songs` (lean catalog), `api_call_log` + `redis_usage_log` ledgers
             │     │           • nightly prune job (`scripts/prune-youtube.ts`) trims stale rows
             │     ├─ Postgres `cached_tracks` ── cache when upstream fails
             │     └─ Bundled static snapshot ── always-on fallback
@@ -71,6 +73,27 @@ outputs to `src/generated/prisma`. Tables:
   `YOUTUBE_DATABASE_URL` is set, else in the main app DB
 - `api_call_log` — daily per-project YouTube API call log (burn-rate visibility; surfaces
   a suspended/quota-exhausted project before the search budget is silently spent)
+- `redis_usage_log` — daily Redis bandwidth ledger (approx bytes read/written + hit/miss),
+  accumulated from the in-process meter in `yt-redis` on each API call; tracks the ~10 GB
+  monthly egress budget before the provider throttles
+
+### Redis key inventory (`yt-redis`)
+
+Capacity is configured on the provider (`maxmemory 200mb`, `maxmemory-policy allkeys-lru`),
+not in code. TTLs are env-overridable (`YOUTUBE_REDIS_*_TTL`):
+
+| Key pattern                         | Value                       | TTL     |
+| ----------------------------------- | --------------------------- | ------- |
+| `search:{normalized_query}`         | `video_id`                  | 24h     |
+| `song:{video_id}`                   | small JSON (metadata)       | 12h     |
+| `neg:{normalized_query}`            | `"1"` (negative cache)      | 2h      |
+| `quota:{project}:{op}:{date}`       | counter                     | 24h     |
+| `ratelimit:{bucket}:{key}`          | counter (API rate limiter)  | window+1s |
+
+`search:` holds the whole catalog's hot-lookup mappings; `song:` is a true read-through in
+front of Postgres, so most song-detail lookups (playback restore, resolve) are served by
+Redis with Postgres hit only on cold cache or writes. The `ratelimit:` counter replaces the
+old per-instance map once Redis is wired (falling back to it while Redis is down).
 
 The catalog is **not** a primary store. It lives on Jamendo (with YouTube filling genre
 gaps), and Phonq degrades in a ladder: live Jamendo → `cached_tracks` (Postgres, written
@@ -101,7 +124,7 @@ reach the UI (errors are logged server-side only).
 | `GET /api/v1/tracks`           | no   | Public read-only catalog API (rate-limited) |
 | `GET /api/v1/search`           | no   | Public read-only search API (rate-limited) |
 | `GET /api/health`              | no   | Uptime check + current catalog provider |
-| `GET /api/youtube/*`           | no   | YouTube resolve / genre-fill / quota status (rate-limited) |
+| `GET /api/youtube/*`           | no   | YouTube resolve / genre-fill / quota + Redis bandwidth status (rate-limited) |
 | `GET /api/tracks`              | no   | Search/browse catalog (rate-limited) |
 | `GET /api/radios`              | no   | Genre radios                       |
 | `GET|POST /api/me/favorites`   | yes  | List / add favorites               |

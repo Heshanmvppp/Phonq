@@ -1,26 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { checkRateLimit, ipKey } from "@/lib/rate-limit";
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("checkRateLimit", () => {
-  it("allows requests within the limit", () => {
+  it("allows requests within the limit", async () => {
     const key = `test-${Math.random()}`;
-    expect(checkRateLimit(key, 3, 60_000)).toBe(true);
-    expect(checkRateLimit(key, 3, 60_000)).toBe(true);
-    expect(checkRateLimit(key, 3, 60_000)).toBe(true);
+    expect(await checkRateLimit(key, 3, 60_000)).toBe(true);
+    expect(await checkRateLimit(key, 3, 60_000)).toBe(true);
+    expect(await checkRateLimit(key, 3, 60_000)).toBe(true);
   });
 
-  it("blocks requests beyond the limit", () => {
+  it("blocks requests beyond the limit", async () => {
     const key = `test-${Math.random()}`;
-    expect(checkRateLimit(key, 2, 60_000)).toBe(true);
-    expect(checkRateLimit(key, 2, 60_000)).toBe(true);
-    expect(checkRateLimit(key, 2, 60_000)).toBe(false);
+    expect(await checkRateLimit(key, 2, 60_000)).toBe(true);
+    expect(await checkRateLimit(key, 2, 60_000)).toBe(true);
+    expect(await checkRateLimit(key, 2, 60_000)).toBe(false);
   });
 
-  it("resets after the window elapses", () => {
+  it("resets after the window elapses", async () => {
+    vi.useFakeTimers();
     const key = `test-${Math.random()}`;
-    expect(checkRateLimit(key, 1, 1)).toBe(true);
-    expect(checkRateLimit(key, 1, 1)).toBe(false);
+    expect(await checkRateLimit(key, 1, 60_000)).toBe(true);
+    expect(await checkRateLimit(key, 1, 60_000)).toBe(false);
+    // A new fixed-window bucket opens once the window boundary passes.
+    vi.advanceTimersByTime(60_001);
+    expect(await checkRateLimit(key, 1, 60_000)).toBe(true);
   });
 });
 

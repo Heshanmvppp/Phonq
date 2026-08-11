@@ -1,6 +1,6 @@
 import "server-only";
 
-import { recordApiCall, today } from "@/lib/youtube-db";
+import { recordApiCall, recordBandwidth, today } from "@/lib/youtube-db";
 import ytRedis from "@/lib/yt-redis";
 
 /**
@@ -142,6 +142,13 @@ export async function getAvailableProject(op: OpType): Promise<Project | null> {
 export async function recordUsage(projectId: number, op: OpType, units: number, endpoint: string): Promise<void> {
   await ytRedis.incrCounter(counterKey(projectId, op), units, 24 * 60 * 60);
   await recordApiCall(projectId, endpoint, units);
+  // Piggyback: hand the accumulated Redis bandwidth meter to the daily ledger
+  // on each API call, so a runaway cache / quota job shows up in the logs
+  // before the monthly egress budget is silently spent.
+  const usage = ytRedis.flushUsage();
+  if (usage.ops > 0) {
+    void recordBandwidth(usage);
+  }
 }
 
 export interface QuotaProjectStat {

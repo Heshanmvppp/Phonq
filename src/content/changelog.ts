@@ -10,6 +10,14 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: "1.0.1",
+    date: "2026-08-09",
+    type: "fix",
+    title: "Player stability, CORS-safe streaming & better catalog filtering",
+    description:
+      "Fixes infinite re-renders in the player bar (#301), routes all audio through a CORS-safe Jamendo stream proxy to eliminate playback errors, enriches sparse search results with cached tags, and expands Portuguese/Brazilian phonk detection so the catalog filter catches more regional tracks. All 59 regression tests pass.",
+  },
+  {
     version: "1.0.0",
     date: "2026-08-06",
     type: "feature",

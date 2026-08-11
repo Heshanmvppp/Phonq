@@ -12,7 +12,7 @@ import { PublicPlayButton } from "@/components/track/public-play-button";
 import { ShareTrackButton } from "@/components/track/share-track-button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { formatDuration, formatNumber } from "@/lib/utils";
+import { canDownloadTrack, formatDuration, formatNumber, trackDownloadHref } from "@/lib/utils";
 import { notFound } from "next/navigation";
 
 interface TrackPageProps {
@@ -118,13 +118,18 @@ export default async function TrackPage({ params }: TrackPageProps) {
 
             <div className="flex flex-wrap items-center gap-3">
               <PublicPlayButton track={track} />
-              {track.audioDownloadAllowed && track.downloadUrl ? (
-                <a href={track.downloadUrl} target="_blank" rel="noreferrer" download>
+              {canDownloadTrack(track) && (
+                <a
+                  href={trackDownloadHref(track)!}
+                  target={track.source === "youtube" ? undefined : "_blank"}
+                  rel={track.source === "youtube" ? undefined : "noreferrer"}
+                  download
+                >
                   <Badge variant="outline" className="h-10 gap-1.5 px-4">
                     <Download className="size-4" /> Download
                   </Badge>
                 </a>
-              ) : null}
+              )}
               <ShareTrackButton />
             </div>
           </div>

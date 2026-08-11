@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
  * Rate-limited to 30 requests / minute per IP. See the docs page for usage.
  */
 export async function GET(request: Request) {
-  if (!checkRateLimit(ipKey(request), 30, 60_000)) {
+  if (!(await checkRateLimit(ipKey(request), 30, 60_000))) {
     return Response.json({ error: "Too many requests, slow down" }, { status: 429 });
   }
 

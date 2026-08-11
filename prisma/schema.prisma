@@ -269,6 +269,29 @@ model ApiCallLog {
   @@map("api_call_log")
 }
 
+/// Daily Redis bandwidth ledger — one row per calendar date, accumulated from
+/// the in-process meter in `yt-redis` (`flushUsage()`) whenever a YouTube API
+/// call is recorded. Tracks approximate bytes read/written so the monthly
+/// Upstash egress budget (~10 GB) is visible before the provider throttles.
+model RedisUsageLog {
+  id         BigInt   @id @default(autoincrement()) @db.BigInt
+  /// Calendar date (YYYY-MM-DD) the ledger covers.
+  date       String   @unique @db.VarChar(10)
+  /// Redis operations performed that day.
+  ops        Int      @default(0)
+  /// Approximate bytes read from Redis that day.
+  readBytes  BigInt   @default(0) @map("read_bytes") @db.BigInt
+  /// Approximate bytes written to Redis that day.
+  writeBytes BigInt   @default(0) @map("write_bytes") @db.BigInt
+  /// Cache GETs that hit.
+  hits       Int      @default(0)
+  /// Cache GETs that missed.
+  misses     Int      @default(0)
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("redis_usage_log")
+}
+
 /// Single-row catalog health/status flag. Lets the frontend and /api/health
 /// report "live | degraded | static" so clients can surface cached/fallback
 /// content proactively instead of waiting for a failed request.

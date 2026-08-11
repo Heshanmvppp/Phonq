@@ -136,6 +136,30 @@ export function getAlbumHref(albumId: string): string | null {
   return `/app/albums/${encodeURIComponent(albumId)}`;
 }
 
+interface DownloadableTrack {
+  name: string;
+  source?: string;
+  audioDownloadAllowed?: boolean;
+  downloadUrl?: string | null;
+  videoId?: string | null;
+}
+
+/** Whether a track offers a download: Jamendo via `downloadUrl`, YouTube via the
+ * server-side yt-dlp proxy (`/api/download/:videoId`). */
+export function canDownloadTrack(track: DownloadableTrack): boolean {
+  if (track.source === "youtube") return Boolean(track.videoId);
+  return Boolean(track.audioDownloadAllowed && track.downloadUrl);
+}
+
+/** Download URL for a track, or null when downloads aren't available. */
+export function trackDownloadHref(track: DownloadableTrack): string | null {
+  if (track.source === "youtube" && track.videoId) {
+    return `/api/download/${track.videoId}?title=${encodeURIComponent(track.name || "phonq-track")}`;
+  }
+  if (track.audioDownloadAllowed && track.downloadUrl) return track.downloadUrl;
+  return null;
+}
+
 /**
  * Pure helper for the queue "drag to reorder" feature: returns a new array with
  * the item at `from` moved to `to`. Out-of-range or no-op indices return the

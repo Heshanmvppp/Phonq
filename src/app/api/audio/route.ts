@@ -22,7 +22,7 @@ export async function OPTIONS() {
 }
 
 export async function GET(request: Request) {
-  if (!checkRateLimit(ipKey(request), 1200, 60_000)) {
+  if (!(await checkRateLimit(ipKey(request), 1200, 60_000))) {
     return new Response("Too many requests, slow down", { status: 429, headers: corsHeaders() });
   }
 

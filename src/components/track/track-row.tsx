@@ -9,7 +9,7 @@ import { Download, Music2, Pause, Play, Plus, X } from "lucide-react";
 import { usePlayer } from "@/components/player/player-context";
 import { ArtistLink } from "@/components/track/artist-link";
 import { LikeButton } from "@/components/track/like-button";
-import { cn, formatDuration } from "@/lib/utils";
+import { cn, canDownloadTrack, formatDuration, trackDownloadHref } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
 
 interface TrackRowProps {
@@ -38,6 +38,7 @@ export function TrackRow({
   const { currentTrack, isPlaying, playTrack, togglePlay } = usePlayer();
   const isCurrent = currentTrack?.id === track.id;
   const isNowPlaying = isCurrent && isPlaying;
+  const downloadHref = trackDownloadHref(track);
 
   function handlePlay() {
     // YouTube tracks have no direct stream URL — they play through the IFrame
@@ -107,15 +108,15 @@ export function TrackRow({
       </span>
 
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 translate-y-1 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100">
-        {track.audioDownloadAllowed && track.downloadUrl && (
+        {downloadHref && canDownloadTrack(track) && (
           <a
-            href={track.downloadUrl}
-            target="_blank"
-            rel="noreferrer"
+            href={downloadHref}
+            target={track.source === "youtube" ? undefined : "_blank"}
+            rel={track.source === "youtube" ? undefined : "noreferrer"}
             download
             className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
             aria-label={`Download ${track.name}`}
-            title="Download (CC license)"
+            title={track.source === "youtube" ? "Download (YouTube)" : "Download (CC license)"}
           >
             <Download className="size-4" />
           </a>

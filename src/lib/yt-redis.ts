@@ -5,12 +5,21 @@ import { Redis } from "@upstash/redis";
 /**
  * Layer 2 — the YouTube catalog Redis accelerator.
  *
- * Redis is a *thin accelerator*, never a source of truth: it holds hot search
- * lookups (`search:{query} → videoId`), a negative cache (`neg:{query}`), and
- * per-project quota counters (`quota:{project}:{opType}:{date}`). When it's
- * unreachable the app falls through to Postgres (the dedicated `songs` store)
- * transparently — "Redis unreachable → falls through to Postgres" is a hard
- * requirement of the design.
+ * Redis is an *accelerator*, never a source of truth. With a 200 MB budget
+ * (`maxmemory 200mb`, `allkeys-lru`) it holds more than a thin hot slice:
+ *
+ *   - `search:{normalized_query}`  → video_id            TTL 24h (env-overridable)
+ *   - `song:{video_id}`            → small JSON           TTL 12h — read-through
+ *     (title/artist/duration/thumbnail) in front of Postgres
+ *   - `neg:{normalized_query}`     → "1"                  TTL 2h (negative cache)
+ *   - `quota:{project}:{op}:{date}`→ counter              TTL 24h
+ *   - `ratelimit:{bucket}:{key}`   → counter              TTL 1h (API rate limiter)
+ *
+ * When Redis is unreachable the app falls through to Postgres (the dedicated
+ * `songs` store) transparently — "Redis unreachable → falls through to Postgres"
+ * is a hard requirement of the design. A lightweight in-process meter estimates
+ * bytes read/written so the monthly bandwidth budget is logged (see
+ * `redis_usage_log` in youtube-db.ts) instead of being a surprise bill.
  *
  * Provider (first match wins):
  *   1. Upstash REST: `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`.
@@ -34,6 +43,8 @@ interface RedisLike {
   exists(key: string): Promise<number>;
   ttl(key: string): Promise<number>;
   ping(): Promise<string>;
+  /** Number of keys currently stored (DBSIZE). */
+  dbSize(): Promise<number>;
 }
 
 interface SetOptions {
@@ -86,6 +97,9 @@ class UpstashRedis implements RedisLike {
   }
   ping() {
     return this.client.ping();
+  }
+  dbSize() {
+    return this.client.dbsize();
   }
 }
 
@@ -154,6 +168,10 @@ class MemoryRedis implements RedisLike {
   async ping(): Promise<string> {
     return "PONG";
   }
+
+  async dbSize(): Promise<number> {
+    return this.store.size;
+  }
 }
 
 /** Best-effort Redis facade. Never throws; returns safe defaults on failure. */
@@ -163,8 +181,39 @@ export class YtRedis {
   private online = true;
   private inner: RedisLike;
 
+  /** In-process bandwidth meter — approximate payload bytes moved per op so the
+   * monthly budget (Upstash 10 GB egress, roughly) is visible before the
+   * provider starts throttling. Estimates key + value bytes; a `flushUsage()`
+   * hands the running total to the `redis_usage_log` daily ledger and resets. */
+  private stats: RedisUsage = { ops: 0, readBytes: 0, writeBytes: 0, hits: 0, misses: 0 };
+
   constructor() {
     this.inner = this.configured ? new UpstashRedis() : new MemoryRedis();
+  }
+
+  /** True when the backing Redis is reachable (flips false on the first failed
+   * call, back true via `healthy()`). Consumers (e.g. the rate limiter) use this
+   * to switch to their in-memory fallback instead of degrading open. */
+  isOnline(): boolean {
+    return this.online;
+  }
+
+  /** Approximate bytes read/written + cache hit/miss counts since the last
+   * `flushUsage()`. */
+  usage(): RedisUsage {
+    return { ...this.stats };
+  }
+
+  /** Return the accumulated bandwidth stats and reset the in-process meter. */
+  flushUsage(): RedisUsage {
+    const snapshot = { ...this.stats };
+    this.stats = { ops: 0, readBytes: 0, writeBytes: 0, hits: 0, misses: 0 };
+    return snapshot;
+  }
+
+  /** Number of keys stored in Redis (DBSIZE) — 0 when down or unconfigured. */
+  async dbSize(): Promise<number> {
+    return this.safe(() => this.inner.dbSize(), 0);
   }
 
   private async safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
@@ -191,12 +240,19 @@ export class YtRedis {
     }
   }
 
-  /* ---- JSON caches: hot lookups + negative cache ---- */
+  /* ---- JSON caches: hot lookups + negative cache + song read-through ---- */
 
   async cacheGet<T = unknown>(key: string): Promise<T | null> {
     return this.safe(async () => {
       const raw = await this.inner.getString(key);
-      if (raw === null) return null;
+      this.stats.ops += 1;
+      if (raw === null) {
+        this.stats.misses += 1;
+        this.stats.readBytes += key.length;
+        return null;
+      }
+      this.stats.hits += 1;
+      this.stats.readBytes += key.length + raw.length;
       try {
         return JSON.parse(raw) as T;
       } catch {
@@ -208,19 +264,27 @@ export class YtRedis {
   async cacheSet<T>(key: string, value: T, ttlSec?: number): Promise<void> {
     await this.safe(async () => {
       const raw = typeof value === "string" ? value : JSON.stringify(value);
+      this.stats.ops += 1;
+      this.stats.writeBytes += key.length + raw.length;
       await this.inner.setString(key, raw, ttlSec ? { ex: ttlSec } : undefined);
     }, undefined);
   }
 
   async cacheDel(key: string): Promise<void> {
-    await this.inner.del(key);
+    await this.safe(async () => {
+      this.stats.ops += 1;
+      this.stats.writeBytes += key.length;
+      await this.inner.del(key);
+    }, undefined);
   }
 
-  /* ---- Numeric counters: per-project quota budget ---- */
+  /* ---- Numeric counters: per-project quota budget + rate limiting ---- */
 
   async readCounter(key: string): Promise<number> {
     return this.safe(async () => {
       const raw = await this.inner.getString(key);
+      this.stats.ops += 1;
+      this.stats.readBytes += key.length + (raw?.length ?? 0);
       if (raw === null) return 0;
       const n = Number(raw);
       return Number.isFinite(n) ? n : 0;
@@ -234,6 +298,8 @@ export class YtRedis {
    */
   async incrCounter(key: string, amount: number, ttlSec: number): Promise<number> {
     return this.safe(async () => {
+      this.stats.ops += 1;
+      this.stats.writeBytes += key.length + String(amount).length;
       const created = await this.inner.setString(key, String(amount), { ex: ttlSec, nx: true });
       if (created === "OK") return amount;
       const next = await this.inner.incrby(key, amount);
@@ -242,6 +308,20 @@ export class YtRedis {
       return next;
     }, amount);
   }
+}
+
+/** Approximate Redis usage since the last flush. */
+export interface RedisUsage {
+  /** Redis operations performed. */
+  ops: number;
+  /** Approximate bytes read (keys + values) from Redis. */
+  readBytes: number;
+  /** Approximate bytes written (keys + values) to Redis. */
+  writeBytes: number;
+  /** Cache GETs that hit. */
+  hits: number;
+  /** Cache GETs that missed. */
+  misses: number;
 }
 
 const globalForRedis = globalThis as unknown as { __phonqYtRedis?: YtRedis };
