@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import { usePlayer } from "@/components/player/player-context";
+import { decorativeWaveform } from "@/lib/waveform";
 import { cn } from "@/lib/utils";
 
 const BAR_COUNT = 48;
@@ -13,16 +14,21 @@ const BAR_COUNT = 48;
  * falls back to deterministic decorative bars — playback is never affected.
  */
 export function Waveform({ className }: { className?: string }) {
-  const { analyserRef, vizEnabled, isPlaying, seek, duration, currentTime } = usePlayer();
+  const { analyserRef, vizEnabled, isPlaying, seek, duration, currentTime, currentTrack } = usePlayer();
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const [hoveredIndex, setHoveredIndex] = React.useState<number | null>(null);
   const seekRef = React.useRef(seek);
   const durationRef = React.useRef(duration);
+  const trackRef = React.useRef(currentTrack);
 
   React.useEffect(() => {
     seekRef.current = seek;
     durationRef.current = duration;
   }, [seek, duration]);
+
+  React.useEffect(() => {
+    trackRef.current = currentTrack;
+  }, [currentTrack]);
 
   function handleSeek(event: React.PointerEvent<HTMLCanvasElement>) {
     if (durationRef.current <= 0) return;
@@ -61,12 +67,9 @@ export function Waveform({ className }: { className?: string }) {
       } else {
         // No live analyser data — e.g. a YouTube track whose native stream fell
         // back to the cross-origin IFrame engine and can't be inspected. Render a
-        // stable, analyzed-style profile so the bar visually matches the live
-        // frequency waveform of Jamendo tracks instead of an animated placeholder.
-        values = Array.from({ length: 64 }, (_, i) => {
-          const curve = Math.sin((i / 63) * Math.PI) * 0.5 + 0.5;
-          return (Math.pow(curve, 1.6) * 0.65 + 0.18) * 255;
-        });
+        // stable, per-track decorative profile (deterministic from the track id)
+        // that looks like an analyzed waveform instead of an animated placeholder.
+        values = decorativeWaveform(trackRef.current?.videoId ?? trackRef.current?.id ?? "");
       }
 
       const barWidth = width / BAR_COUNT;

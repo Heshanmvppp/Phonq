@@ -7,6 +7,7 @@ import { useSession } from "next-auth/react";
 
 import { YouTubeEngine, type YouTubeEngineHandle, type YouTubeEngineState } from "@/components/player/youtube-engine";
 import type { Track } from "@/lib/jamendo";
+import { mediaErrorName } from "@/lib/waveform";
 import { reorderWithIndex } from "@/lib/utils";
 
 type RepeatMode = "off" | "all" | "one";
@@ -622,14 +623,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       reportHistory();
     };
     const onPause = () => setIsPlaying(false);
-    const onError = () => {
+    const onError = (event: Event) => {
       const track = currentTrackRef.current;
       if (track?.source !== "youtube" || ytFallbackRef.current) return;
-      // A transient failure (slow first byte, wedged dev server, one-off 5xx)
-      // shouldn't permanently demote the track to the IFrame animation path.
-      // Retry the native stream a bounded number of times with a short backoff
-      // before falling back.
+      const mediaError = (event.currentTarget as HTMLAudioElement | null)?.error;
+      const codeName = mediaErrorName(mediaError?.code ?? null);
+      const message = mediaError?.message ? ` (${mediaError.message})` : "";
+      const detail = `YouTube native stream for ${track.videoId ?? track.id} failed: ${codeName}${message}`;
+
       if (streamRetryRef.current < MAX_STREAM_RETRIES) {
+        // A transient failure (slow first byte, wedged dev server, one-off 5xx)
+        // shouldn't permanently demote the track to the IFrame animation path.
+        // Retry the native stream a bounded number of times with a short backoff
+        // before falling back.
+        console.warn(`[player] ${detail} — retrying native stream`);
         streamRetryRef.current += 1;
         const el = audioRef.current;
         const url = proxiedAudioUrl(track);
@@ -650,6 +657,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       // failure) → fall back to the IFrame engine. Clear the analyser wiring
       // too so the freshly remounted `<audio>` element doesn't inherit a dead
       // media source chain (see the keyed element below).
+      console.warn(`[player] ${detail} — giving up, falling back to IFrame engine`);
       setYtFallback(true);
       setIsLoading(false);
       setVizEnabled(false);
