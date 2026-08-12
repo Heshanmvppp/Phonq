@@ -5,6 +5,7 @@ import * as React from "react";
 import Image from "next/image";
 
 import {
+  Download,
   Heart,
   ListMusic,
   ListPlus,
@@ -34,7 +35,7 @@ import { LikeButton } from "@/components/track/like-button";
 import { ShareModal } from "@/components/track/share-modal";
 import { useDropdownMenu, DropdownMenu } from "@/components/ui/dropdown-menu";
 import { Slider } from "@/components/ui/slider";
-import { cn, formatDuration } from "@/lib/utils";
+import { cn, canDownloadTrack, formatDuration, trackDownloadHref } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
 
 function PlayPauseIcon({ playing, loading }: { playing: boolean; loading?: boolean }) {
@@ -141,6 +142,18 @@ export function PlayerBar() {
   const progressPercent = duration > 0 ? Math.max(0, Math.min(100, (displayValue / duration) * 100)) : 0;
   const previewTime = isScrubbing ? scrubValue : currentTime;
 
+  /** Arrow-key seeking for the (controlled) range inputs: prevent the native
+   * step and seek ±5s ourselves so the thumb doesn't snap back to `currentTime`. */
+  function handleSeekKeyDown(event: React.KeyboardEvent) {
+    if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+      event.preventDefault();
+      seek(Math.max(0, displayValue - 5));
+    } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+      event.preventDefault();
+      seek(Math.min(duration || 0, displayValue + 5));
+    }
+  }
+
   if (!currentTrack) return null;
 
   return (
@@ -150,12 +163,21 @@ export function PlayerBar() {
       </div>
 
       <div className="flex items-center gap-2 px-3 pb-1.5 sm:hidden">
-        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{formatDuration(currentTime)}</span>
+        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{formatDuration(displayValue)}</span>
         <Slider
-          value={Math.min(currentTime, duration || 1)}
+          value={Math.min(displayValue, duration || 1)}
           max={duration || 1}
           step={1}
-          onValueChange={seek}
+          onValueChange={setScrubValue}
+          onPointerDown={() => {
+            setIsScrubbing(true);
+            setReleasePulse(false);
+          }}
+          onPointerUp={() => {
+            setIsScrubbing(false);
+            seek(scrubValue);
+          }}
+          onKeyDown={handleSeekKeyDown}
           aria-label="Seek"
           className="flex-1"
         />
@@ -214,6 +236,19 @@ export function PlayerBar() {
             >
               <Share2 className="size-4" />
             </button>
+            {canDownloadTrack(currentTrack) && (
+              <a
+                href={trackDownloadHref(currentTrack) ?? "#"}
+                target={currentTrack.source === "youtube" ? undefined : "_blank"}
+                rel={currentTrack.source === "youtube" ? undefined : "noreferrer"}
+                download
+                className="inline-flex items-center justify-center rounded-full p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                aria-label={`Download ${currentTrack.name}`}
+                title={currentTrack.source === "youtube" ? "Download (YouTube)" : "Download (CC license)"}
+              >
+                <Download className="size-4" />
+              </a>
+            )}
           </div>
         </div>
 
@@ -273,6 +308,7 @@ export function PlayerBar() {
                   setReleasePulse(true);
                   window.setTimeout(() => setReleasePulse(false), 220);
                 }}
+                onKeyDown={handleSeekKeyDown}
                 className="flex-1"
               />
               {isScrubbing ? (
@@ -318,8 +354,14 @@ export function PlayerBar() {
             </div>
           </div>
 
-          {/* Mobile: drop-up menu with like/playlist/share */}
-          <div className="sm:hidden">
+          {/* Mobile: heart + drop-up menu with playlist/share/download */}
+          <div className="flex items-center gap-0.5 sm:hidden">
+            <LikeButton
+              trackId={currentTrack.id}
+              initialLiked={favoriteIds.has(currentTrack.id)}
+              onLikedChange={(liked) => setFavorite(currentTrack.id, liked)}
+              className="shrink-0"
+            />
             <DropdownMenu
               align="end"
               trigger={
@@ -446,6 +488,19 @@ function MobileMenuItems({
         <Share2 className="size-4" />
         Share
       </button>
+      {canDownloadTrack(currentTrack) ? (
+        <a
+          href={trackDownloadHref(currentTrack) ?? "#"}
+          target={currentTrack.source === "youtube" ? undefined : "_blank"}
+          rel={currentTrack.source === "youtube" ? undefined : "noreferrer"}
+          download
+          onClick={() => menu?.close()}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-muted"
+        >
+          <Download className="size-4" />
+          Download
+        </a>
+      ) : null}
     </div>
   );
 }

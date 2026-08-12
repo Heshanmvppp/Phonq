@@ -260,11 +260,20 @@ describe("catalog fallback ladder", () => {
     expect(result.length).toBeGreaterThan(0);
   });
 
-  it("reports degraded status after an upstream failure", async () => {
+  it("reports degraded status after an upstream failure when the cache holds content", async () => {
     vi.mocked(jamendo.fetchTrendingPhonk).mockRejectedValue(new Error("boom"));
+    mocks.prisma.cachedTrack.count.mockResolvedValue(5);
     await fetchTrendingPhonk(5).catch(() => undefined);
     const status = await getCatalogStatus();
     expect(status.provider).toBe("degraded");
+  });
+
+  it("reports static status when the upstream fails and the cache is empty", async () => {
+    vi.mocked(jamendo.fetchTrendingPhonk).mockRejectedValue(new Error("boom"));
+    mocks.prisma.cachedTrack.count.mockResolvedValue(0);
+    await fetchTrendingPhonk(5).catch(() => undefined);
+    const status = await getCatalogStatus();
+    expect(status.provider).toBe("static");
   });
 });
 

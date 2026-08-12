@@ -1,6 +1,6 @@
 import "server-only";
 
-import { extractStreamUrl } from "@/lib/youtube-stream";
+import { extractStreamUrl, invalidateStreamCache } from "@/lib/youtube-stream";
 import { checkRateLimit, ipKey } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +41,15 @@ export async function GET(request: Request) {
     return new Response("Invalid videoId", { status: 400, headers: corsHeaders() });
   }
 
+  const range = request.headers.get("range");
+  const upstreamHeaders: HeadersInit = { accept: "audio/*, */*;q=0.8" };
+  if (range) upstreamHeaders.range = range;
+
+  const fetchUpstream = async (target: string) => fetch(target, { method: "GET", headers: upstreamHeaders, redirect: "follow" });
+  const usable = (res: Response) => res.ok || res.status === 416;
+
   let target: string;
+  let res: Response;
   try {
     target = (await extractStreamUrl(videoId)).url;
   } catch (err) {
@@ -50,12 +58,17 @@ export async function GET(request: Request) {
   }
 
   try {
-    const range = request.headers.get("range");
-    const upstreamHeaders: HeadersInit = { accept: "audio/*, */*;q=0.8" };
-    if (range) upstreamHeaders.range = range;
-    const res = await fetch(target, { method: "GET", headers: upstreamHeaders, redirect: "follow" });
+    res = await fetchUpstream(target);
+    if (!usable(res)) {
+      // Cached googlevideo URLs can be revoked before their TTL — drop the
+      // stale entry and re-extract once so a dead URL doesn't keep 502ing (and
+      // silently demoting the track to the IFrame animation path).
+      invalidateStreamCache(videoId);
+      target = (await extractStreamUrl(videoId)).url;
+      res = await fetchUpstream(target);
+    }
 
-    if (!res.ok && res.status !== 416) {
+    if (!usable(res)) {
       return new Response(`Upstream error ${res.status}`, { status: 502, headers: corsHeaders() });
     }
 

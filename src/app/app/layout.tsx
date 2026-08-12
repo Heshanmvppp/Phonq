@@ -17,7 +17,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <AppSidebar />
       <div className="flex min-h-screen flex-col pl-16 md:pl-60">
         <AppHeader name={session.user.name} email={session.user.email} image={session.user.image} />
-        <main className="flex-1 pb-32">{children}</main>
+        <main className="flex-1 pb-40 md:pb-32">{children}</main>
       </div>
       <PlayerBar />
     </div>

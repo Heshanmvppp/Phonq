@@ -2,6 +2,7 @@
 
 import * as React from "react";
 
+import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
 
 import { YouTubeEngine, type YouTubeEngineHandle, type YouTubeEngineState } from "@/components/player/youtube-engine";
@@ -105,6 +106,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const corsCacheRef = React.useRef(new Map<string, boolean>());
   const pendingUrlRef = React.useRef<string | null>(null);
   const lastReportedRef = React.useRef<string | null>(null);
+  const pathname = usePathname();
 
   const [queue, setQueue] = React.useState<Track[]>([]);
   const [queueIndex, setQueueIndex] = React.useState(-1);
@@ -137,7 +139,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const ytFallbackRef = React.useRef(false);
   const streamRetryRef = React.useRef(0);
   const preloadAudioRef = React.useRef<HTMLAudioElement | null>(null);
-  const preloadedNextRef = React.useRef<{ index: number; url: string } | null>(null);
+  const preloadedNextRef = React.useRef<{ index: number; url: string; trackId: string } | null>(null);
 
   React.useEffect(() => {
     queueRef.current = queue;
@@ -174,7 +176,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     ytFallbackRef.current = ytFallback;
   }, [ytFallback]);
 
-  /** Refetches the signed-in user's favorite ids so the player-bar heart stays in sync. */
+  /** Refetches the signed-in user's favorite ids so the player-bar heart stays
+   * in sync — on load, when the window regains focus, and whenever the user
+   * navigates between pages. */
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     let cancelled = false;
@@ -197,7 +201,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
       window.removeEventListener("focus", refresh);
     };
-  }, [sessionStatus]);
+  }, [sessionStatus, pathname]);
 
   const setFavorite = React.useCallback((trackId: string, liked: boolean) => {
     setFavoriteIds((prev) => {
@@ -295,7 +299,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         preloaded &&
         preloaded.index >= 0 &&
         preloaded.index < len &&
-        q[preloaded.index]?.audioUrl === preloaded.url
+        q[preloaded.index]?.id === preloaded.trackId
       ) {
         idx = preloaded.index;
       } else {
@@ -318,12 +322,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const previous = React.useCallback(() => {
     const audio = audioRef.current;
     const idx = queueIndexRef.current;
+    const len = queueRef.current.length;
     if (audio && audio.currentTime > 3) {
       audio.currentTime = 0;
       setCurrentTime(0);
       return;
     }
     if (idx > 0) setQueueIndex(idx - 1);
+    else if (len > 1) setQueueIndex(len - 1);
   }, []);
 
   const playQueue = React.useCallback((tracks: Track[], startIndex = 0) => {
@@ -502,7 +508,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     if (!nextTrack || nextTrack.id === track.id) return;
     const url = proxiedAudioUrl(nextTrack);
     if (!url) return;
-    preloadedNextRef.current = { index: nextIndex, url };
+    preloadedNextRef.current = { index: nextIndex, url, trackId: nextTrack.id };
     void probeCors(url).then((allowed) => {
       if (preloadedNextRef.current?.url !== url) return;
       const previous = preloadAudioRef.current;
@@ -534,7 +540,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (document.querySelector('[role="dialog"]')) return;
+      if (document.querySelector('[role="dialog"], [role="menu"], [aria-expanded="true"]')) return;
 
       if (event.key === " " || event.code === "Space") {
         if (isEditable(event.target)) return;

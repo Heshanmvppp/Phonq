@@ -160,6 +160,19 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
 
   const hasResults = tracks.length > 0;
 
+  const artistsCount = grouped.sortedArtists.length;
+  const albumsCount = grouped.sortedAlbums.length;
+  const tagsCount = grouped.sortedTags.length;
+
+  const resultLabel =
+    activeTab === "tracks"
+      ? `${tracks.length} result${tracks.length === 1 ? "" : "s"}`
+      : activeTab === "artists"
+        ? `${artistsCount} artist${artistsCount === 1 ? "" : "s"}`
+        : activeTab === "albums"
+          ? `${albumsCount} album${albumsCount === 1 ? "" : "s"}`
+          : `${tagsCount} tag${tagsCount === 1 ? "" : "s"}`;
+
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <h1 className="font-display text-2xl font-bold">Search</h1>
@@ -252,7 +265,7 @@ export function SearchClient({ popularTracks }: { popularTracks: Track[] }) {
       <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
         <span>
           {hasResults
-            ? `${tracks.length} result${tracks.length === 1 ? "" : "s"}${selectedTag ? ` filtered by “${selectedTag}”` : ""}`
+            ? `${resultLabel}${selectedTag ? ` filtered by “${selectedTag}”` : ""}`
             : "Browse the full phonk catalog"}
         </span>
         {selectedTag && (

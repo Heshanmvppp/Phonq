@@ -202,6 +202,8 @@ export function DropdownMenu({ trigger, children, align = "end", className, onOp
             <MenuContext.Provider value={contextValue}>
               <div
                 ref={menuRef}
+                role="menu"
+                aria-orientation="vertical"
                 className={cn(
                   "fixed z-[100] min-w-48 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl",
                   closing ? "animate-fade-up-out" : "animate-fade-up",

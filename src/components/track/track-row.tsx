@@ -121,7 +121,7 @@ export function TrackRow({
         {formatDuration(track.duration)}
       </span>
 
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 translate-y-1 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100">
+      <div className="flex shrink-0 items-center gap-0.5 sm:translate-y-1 sm:opacity-0 sm:transition-all sm:duration-200 focus-within:translate-y-0 focus-within:opacity-100 sm:group-hover:translate-y-0 sm:group-hover:opacity-100">
         {downloadHref && canDownloadTrack(track) && (
           <a
             href={downloadHref}

@@ -821,12 +821,14 @@ export function runtimeFillEnabled(): boolean {
   return !["0", "false", "off", "no"].includes(value);
 }
 
-function markGenreFill(subgenre: string): boolean {
+function genreFillDue(subgenre: string): boolean {
   const now = Date.now();
   const last = genreFillAt.get(subgenre) ?? 0;
-  if (now - last < GENRE_FILL_DEDUPE_MS) return false;
-  genreFillAt.set(subgenre, now);
-  return true;
+  return now - last >= GENRE_FILL_DEDUPE_MS;
+}
+
+function markGenreFill(subgenre: string): void {
+  genreFillAt.set(subgenre, Date.now());
 }
 
 /** Skip low-quality "lyrics" results (no audio of their own). */
@@ -865,7 +867,7 @@ export async function fetchGenreVideos(
   limit = 12,
 ): Promise<YouTubeVideo[]> {
   if (!hasProjects() || !runtimeFillEnabled() || limit <= 0) return [];
-  if (queries.length === 0 || !markGenreFill(subgenre)) return [];
+  if (queries.length === 0 || !genreFillDue(subgenre)) return [];
 
   const found: YouTubeVideo[] = [];
   const seenIds = new Set<string>();
@@ -921,6 +923,7 @@ export async function fetchGenreVideos(
     }
   }
 
+  if (found.length > 0) markGenreFill(subgenre);
   return found.slice(0, limit);
 }
 
@@ -928,12 +931,14 @@ export async function fetchGenreVideos(
  * the same 100-unit search within a day. */
 const queryFillAt: Map<string, number> = new Map();
 
-function markQueryFill(key: string): boolean {
+function queryFillDue(key: string): boolean {
   const now = Date.now();
   const last = queryFillAt.get(key) ?? 0;
-  if (now - last < GENRE_FILL_DEDUPE_MS) return false;
-  queryFillAt.set(key, now);
-  return true;
+  return now - last >= GENRE_FILL_DEDUPE_MS;
+}
+
+function markQueryFill(key: string): void {
+  queryFillAt.set(key, Date.now());
 }
 
 /**
@@ -947,7 +952,7 @@ function markQueryFill(key: string): boolean {
 export async function fetchQueryVideos(query: string, limit = 12, subgenre?: string): Promise<YouTubeVideo[]> {
   const q = query.trim();
   if (!hasProjects() || !runtimeFillEnabled() || limit <= 0 || !q) return [];
-  if (!markQueryFill(q.toLowerCase())) return [];
+  if (!queryFillDue(q.toLowerCase())) return [];
 
   const data = await ytGet<SearchResponse>(
     "search",
@@ -995,8 +1000,9 @@ export async function fetchQueryVideos(query: string, limit = 12, subgenre?: str
     found.push(track);
     await persistSong(track, channelQuality(track.channelTitle));
     if (found.length >= limit) break;
-  }
+   }
 
+  if (found.length > 0) markQueryFill(q.toLowerCase());
   return found;
 }
 

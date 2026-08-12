@@ -4,7 +4,7 @@ import * as React from "react";
 
 import { useRouter } from "next/navigation";
 
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
 
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { UserMenu } from "@/components/layout/user-menu";
@@ -42,8 +42,18 @@ export function AppHeader({ name, email, image }: AppHeaderProps) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search songs, artists, albums…"
-          className="h-9 w-full rounded-full border border-input bg-muted/50 pl-9 pr-4 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:bg-background focus:ring-2 focus:ring-ring/40"
+          className="h-9 w-full rounded-full border border-input bg-muted/50 pl-9 pr-8 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:bg-background focus:ring-2 focus:ring-ring/40"
         />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery("")}
+            aria-label="Clear search"
+            className="absolute right-2.5 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+          >
+            <X className="size-3" />
+          </button>
+        )}
       </form>
       <div className="ml-auto flex items-center gap-1">
         <ThemeToggle />

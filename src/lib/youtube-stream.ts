@@ -46,6 +46,12 @@ interface CacheEntry {
 /** Deciphered URLs expire server-side (~6h), so a 30-minute TTL is plenty. */
 const urlCache = new Map<string, CacheEntry>();
 
+/** Drop a cached stream URL so the next request re-extracts (used when the
+ * upstream proxy fetch fails — googlevideo URLs can be revoked before TTL). */
+export function invalidateStreamCache(videoId: string): void {
+  urlCache.delete(videoId);
+}
+
 /** One lazy `Innertube` session per client type (each is heavy to create). */
 const innertubeCache = new Map<ClientType, Promise<Innertube>>();
 

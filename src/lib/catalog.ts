@@ -166,7 +166,8 @@ export async function getCatalogStatus(): Promise<CatalogStatusShape> {
   const lastFailure = row?.lastFailure ? row.lastFailure.getTime() : 0;
   const lastSuccess = row?.lastSuccess ? row.lastSuccess.getTime() : 0;
   const dbRowDegraded = lastFailure > lastSuccess && Date.now() - lastFailure < DEGRADED_WINDOW_MS;
-  const provider: CatalogProvider = memoryDegraded || dbRowDegraded ? "degraded" : "live";
+  const provider: CatalogProvider =
+    memoryDegraded || dbRowDegraded ? (cacheCount > 0 ? "degraded" : "static") : "live";
 
   return {
     provider,
@@ -560,7 +561,7 @@ async function queryDbTracks(opts: QueryOptions): Promise<Track[] | null> {
         { tags: { contains: q, mode: "insensitive" } },
       ];
     } else if (opts.tags && opts.tags.length > 0) {
-      where.AND = opts.tags.map((tag) => ({ tags: { contains: tag, mode: "insensitive" } }));
+      where.OR = opts.tags.map((tag) => ({ tags: { contains: tag, mode: "insensitive" } }));
     }
 
     // Phonk-only curation: narrow to tracks tagged with phonk-family (or a
@@ -613,7 +614,7 @@ function queryStaticTracks(opts: QueryOptions): Track[] {
         t.tags.some((tag) => tag.toLowerCase().includes(q)),
     );
   } else if (opts.tags && opts.tags.length > 0) {
-    list = list.filter((t) => opts.tags!.every((tag) => t.tags.some((x) => x.toLowerCase().includes(tag.toLowerCase()))));
+    list = list.filter((t) => opts.tags!.some((tag) => t.tags.some((x) => x.toLowerCase().includes(tag.toLowerCase()))));
   }
   if (opts.subgenre) {
     list = list.filter((t) => t.subgenre === opts.subgenre);
@@ -829,7 +830,7 @@ export async function searchTracks(query: string, limit = 30, subgenre?: string)
     // degraded entirely — top up with budget-gated live YouTube search results
     // for the exact query so search never renders empty. Winners are persisted
     // on the run, so later identical queries are free DB reads.
-    if (results.length >= Math.min(limit, 6)) return results.slice(0, limit);
+    if (results.length >= limit) return results.slice(0, limit);
     const filled = await fetchYouTubeQueryFill(query.trim(), limit - results.length, subgenre);
     return dedupeTracks([...results, ...filled]).slice(0, limit);
   };

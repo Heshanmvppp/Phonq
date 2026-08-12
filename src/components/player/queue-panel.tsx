@@ -129,14 +129,12 @@ export function QueuePanel() {
                     />
                   )}
                   {canDrag && (
-                    <button
-                      type="button"
-                      className="flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
-                      aria-label="Drag to reorder"
-                      aria-hidden={!canDrag}
+                    <span
+                      className="hidden size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-opacity hover:bg-muted sm:flex sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+                      aria-hidden="true"
                     >
                       <GripVertical className="size-4" />
-                    </button>
+                    </span>
                   )}
                   <button
                     type="button"
@@ -180,7 +178,7 @@ export function QueuePanel() {
                         setRemovingIndexes((prev) => prev.filter((value) => value !== index));
                       }, 220);
                     }}
-                    className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-destructive focus:opacity-100 group-hover:opacity-100"
+                    className="rounded-md p-1 text-muted-foreground sm:opacity-0 sm:transition-opacity hover:bg-background hover:text-destructive focus-visible:opacity-100 sm:group-hover:opacity-100"
                     aria-label="Remove from queue"
                   >
                     <X className="size-4" />

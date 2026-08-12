@@ -2,12 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   extractStreamUrl: vi.fn(),
+  invalidateStreamCache: vi.fn(),
   checkRateLimit: vi.fn(async () => true),
   ipKey: vi.fn(() => "test-ip"),
   fetch: vi.fn(),
 }));
 
-vi.mock("@/lib/youtube-stream", () => ({ extractStreamUrl: mocks.extractStreamUrl }));
+vi.mock("@/lib/youtube-stream", () => ({
+  extractStreamUrl: mocks.extractStreamUrl,
+  invalidateStreamCache: mocks.invalidateStreamCache,
+}));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: mocks.checkRateLimit, ipKey: mocks.ipKey }));
 
 import { GET } from "@/app/api/youtube/stream/route";
@@ -102,5 +106,30 @@ describe("GET /api/youtube/stream", () => {
 
     const res = await GET(request(VALID));
     expect(res.status).toBe(502);
+    expect(mocks.invalidateStreamCache).toHaveBeenCalledWith(VALID);
+    expect(mocks.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-extracts and recovers when the cached stream URL went stale", async () => {
+    mocks.extractStreamUrl
+      .mockResolvedValueOnce({ url: "https://rr.googlevideo.com/old?x=1" })
+      .mockResolvedValueOnce({ url: "https://rr.googlevideo.com/fresh?x=1" });
+    mocks.fetch
+      .mockResolvedValueOnce(new Response("stale", { status: 403 }))
+      .mockResolvedValueOnce(
+        new Response("audio-bytes", {
+          status: 200,
+          headers: { "content-type": "audio/mp4", "content-length": "11" },
+        }),
+      );
+
+    const res = await GET(request(VALID));
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("audio-bytes");
+    expect(mocks.invalidateStreamCache).toHaveBeenCalledWith(VALID);
+    expect(mocks.extractStreamUrl).toHaveBeenCalledTimes(2);
+    expect(mocks.fetch).toHaveBeenNthCalledWith(1, "https://rr.googlevideo.com/old?x=1", expect.anything());
+    expect(mocks.fetch).toHaveBeenNthCalledWith(2, "https://rr.googlevideo.com/fresh?x=1", expect.anything());
   });
 });

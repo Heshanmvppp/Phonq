@@ -13,9 +13,23 @@ const BAR_COUNT = 48;
  * falls back to deterministic decorative bars — playback is never affected.
  */
 export function Waveform({ className }: { className?: string }) {
-  const { analyserRef, vizEnabled, isPlaying } = usePlayer();
+  const { analyserRef, vizEnabled, isPlaying, seek, duration, currentTime } = usePlayer();
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const [hoveredIndex, setHoveredIndex] = React.useState<number | null>(null);
+  const seekRef = React.useRef(seek);
+  const durationRef = React.useRef(duration);
+
+  React.useEffect(() => {
+    seekRef.current = seek;
+    durationRef.current = duration;
+  }, [seek, duration]);
+
+  function handleSeek(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (durationRef.current <= 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    seekRef.current(ratio * durationRef.current);
+  }
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
@@ -87,8 +101,13 @@ export function Waveform({ className }: { className?: string }) {
   return (
     <canvas
       ref={canvasRef}
-      className={cn("block h-10 w-full cursor-crosshair", className)}
-      aria-hidden="true"
+      className={cn("block h-10 w-full cursor-pointer", className)}
+      role="slider"
+      aria-label="Seek"
+      aria-valuemin={0}
+      aria-valuemax={Math.round(duration || 0)}
+      aria-valuenow={Math.round(currentTime || 0)}
+      onPointerDown={handleSeek}
       onMouseMove={(event) => {
         const rect = event.currentTarget.getBoundingClientRect();
         const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
