@@ -32,7 +32,7 @@ import { Waveform } from "@/components/player/waveform";
 import { AddToPlaylistButton } from "@/components/track/add-to-playlist";
 import { LikeButton } from "@/components/track/like-button";
 import { ShareModal } from "@/components/track/share-modal";
-import { DropdownMenu } from "@/components/ui/dropdown-menu";
+import { useDropdownMenu, DropdownMenu } from "@/components/ui/dropdown-menu";
 import { Slider } from "@/components/ui/slider";
 import { cn, formatDuration } from "@/lib/utils";
 import type { Track } from "@/lib/jamendo";
@@ -94,7 +94,6 @@ export function PlayerBar() {
   const [incomingTrack, setIncomingTrack] = React.useState<Track | null>(null);
   const [isCrossfading, setIsCrossfading] = React.useState(false);
   const [shareOpen, setShareOpen] = React.useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
   if ((currentTrack?.id ?? null) !== currentTrackId) {
     setCurrentTrackId(currentTrack?.id ?? null);
@@ -206,9 +205,7 @@ export function PlayerBar() {
               onLikedChange={(liked) => setFavorite(currentTrack.id, liked)}
               className="shrink-0"
             />
-            {activeTrack && (
-              <AddToPlaylistButton trackId={activeTrack.id} />
-            )}
+            <AddToPlaylistButton trackId={currentTrack.id} />
             <button
               type="button"
               onClick={() => setShareOpen(true)}
@@ -324,40 +321,14 @@ export function PlayerBar() {
           {/* Mobile: drop-up menu with like/playlist/share */}
           <div className="sm:hidden">
             <DropdownMenu
+              align="end"
               trigger={
                 <span className={cn(iconClass, "rounded-md p-1.5 active:scale-95")}>
                   <MoreHorizontal className="size-5" />
                 </span>
               }
-              onOpenChange={setMobileMenuOpen}
             >
-              <div className="max-h-64 overflow-y-auto p-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFavorite(currentTrack.id, !favoriteIds.has(currentTrack.id));
-                    setMobileMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-muted"
-                >
-                  <Heart className={cn("size-4", favoriteIds.has(currentTrack.id) && "fill-primary text-primary")} />
-                  {favoriteIds.has(currentTrack.id) ? "Remove from favorites" : "Add to favorites"}
-                </button>
-                {activeTrack && (
-                  <AddToPlaylistDropdownItem trackId={activeTrack.id} onAdded={() => setMobileMenuOpen(false)} />
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShareOpen(true);
-                    setMobileMenuOpen(false);
-                  }}
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-muted"
-                >
-                  <Share2 className="size-4" />
-                  Share
-                </button>
-              </div>
+              <MobileMenuItems currentTrack={currentTrack} setFavorite={setFavorite} favoriteIds={favoriteIds} setShareOpen={setShareOpen} />
             </DropdownMenu>
           </div>
 
@@ -374,17 +345,107 @@ export function PlayerBar() {
 
       </div>
 
-      {activeTrack && (
-        <ShareModal
-          open={shareOpen}
-          onOpenChange={setShareOpen}
-          url={`/track/${activeTrack.id}`}
-          title={`${activeTrack.name} — ${activeTrack.artistName}`}
-          image={activeTrack.image}
-        />
-      )}
+      <ShareModal
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        url={`/track/${currentTrack.id}`}
+        title={`${currentTrack.name} — ${currentTrack.artistName}`}
+        image={currentTrack.image}
+      />
 
       <QueuePanel />
+    </div>
+  );
+}
+
+/** Mobile player-bar heart that actually persists (unlike a purely local
+ * `setFavorite`, which would lose the like on reload). */
+function MobileLikeMenuItem({
+  trackId,
+  liked,
+  onLikedChange,
+}: {
+  trackId: string;
+  liked: boolean;
+  onLikedChange: (liked: boolean) => void;
+}) {
+  const { status } = useSession();
+  const router = useRouter();
+  const [pending, setPending] = React.useState(false);
+
+  async function handleClick() {
+    if (status !== "authenticated") {
+      router.push(`/login?callbackUrl=${encodeURIComponent(window.location.pathname)}`);
+      return;
+    }
+    if (pending) return;
+    const next = !liked;
+    setPending(true);
+    try {
+      const res = await fetch("/api/me/favorites", {
+        method: next ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackId }),
+      });
+      if (res.ok) {
+        onLikedChange(next);
+        router.refresh();
+      }
+    } catch {
+      /* keep previous state */
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={pending}
+      className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-muted disabled:opacity-60"
+    >
+      <Heart className={cn("size-4", liked && "fill-primary text-primary")} />
+      {liked ? "Remove from favorites" : "Add to favorites"}
+    </button>
+  );
+}
+
+function MobileMenuItems({
+  currentTrack,
+  setFavorite,
+  favoriteIds,
+  setShareOpen,
+}: {
+  currentTrack: Track;
+  setFavorite: (id: string, liked: boolean) => void;
+  favoriteIds: Set<string>;
+  setShareOpen: (open: boolean) => void;
+}) {
+  const menu = useDropdownMenu();
+
+  return (
+    <div className="max-h-64 overflow-y-auto p-1">
+      <MobileLikeMenuItem
+        trackId={currentTrack.id}
+        liked={favoriteIds.has(currentTrack.id)}
+        onLikedChange={(liked) => {
+          setFavorite(currentTrack.id, liked);
+          menu?.close();
+        }}
+      />
+      <AddToPlaylistDropdownItem trackId={currentTrack.id} onAdded={() => menu?.close()} />
+      <button
+        type="button"
+        onClick={() => {
+          setShareOpen(true);
+          menu?.close();
+        }}
+        className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-muted"
+      >
+        <Share2 className="size-4" />
+        Share
+      </button>
     </div>
   );
 }

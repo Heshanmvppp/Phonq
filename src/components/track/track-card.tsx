@@ -81,7 +81,7 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
         )}
 
         {/* Overlay actions on bottom of cover */}
-        <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1.5 p-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1.5 p-2 sm:opacity-0 sm:transition-opacity sm:duration-200 sm:group-hover:opacity-100">
           {downloadHref && canDownloadTrack(track) && (
             <a
               href={downloadHref}
@@ -99,7 +99,7 @@ export function TrackCard({ track, queue, index = 0, liked = false, compact = fa
           <LikeButton
             trackId={track.id}
             initialLiked={liked}
-            className="flex size-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/80 [&_svg]:text-white [&_svg]:fill-transparent data-[liked=true]:text-primary [&_svg[data-liked=true]]:fill-primary"
+            className="flex size-8 items-center justify-center rounded-full bg-black/60 backdrop-blur-sm transition-colors hover:bg-black/80 [&_svg]:text-white"
           />
           <button
             type="button"

@@ -49,6 +49,12 @@ const PlayerContext = React.createContext<PlayerContextValue | null>(null);
 
 const VOLUME_KEY = "phonq:volume";
 
+/** How many times the native YouTube stream is retried before the IFrame
+ * fallback. Extraction/upstream blips are common (a slow first byte, a wedged
+ * dev server, a one-off 5xx) and would otherwise permanently demote a track to
+ * the decorative-animation path. */
+const MAX_STREAM_RETRIES = 2;
+
 const JAMENDO_STREAM_HOSTS = new Set([
   "api.jamendo.com",
   "prod-1.storage.jamendo.com",
@@ -129,6 +135,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const durationRef = React.useRef(0);
   const volumeRef = React.useRef(volume);
   const ytFallbackRef = React.useRef(false);
+  const streamRetryRef = React.useRef(0);
   const preloadAudioRef = React.useRef<HTMLAudioElement | null>(null);
   const preloadedNextRef = React.useRef<{ index: number; url: string } | null>(null);
 
@@ -255,10 +262,25 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const track = currentTrackRef.current;
     if (!track || lastReportedRef.current === track.id) return;
     lastReportedRef.current = track.id;
+    // For YouTube tracks, send enough metadata that the history route can
+    // upsert the video into the `songs` catalog on playback. Otherwise a video
+    // that was only ever in the Redis hot cache (or was pruned) would be saved
+    // to Listen/Favorite but never resolve back on read — silently vanishing.
+    const body: Record<string, unknown> = { trackId: track.id };
+    if (track.source === "youtube" && track.videoId) {
+      body.youtube = {
+        videoId: track.videoId,
+        title: track.name,
+        artist: track.artistName,
+        durationSec: Math.round(track.duration || 0),
+        channelId: track.artistId?.startsWith("yt:") ? null : (track.artistId ?? null),
+        channelTitle: track.artistName,
+      };
+    }
     void fetch("/api/me/history", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ trackId: track.id }),
+      body: JSON.stringify(body),
     }).catch(() => undefined);
   }, []);
 
@@ -434,6 +456,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     // to the IFrame engine (see the `error` listener below).
     const url = proxiedAudioUrl(track);
     pendingUrlRef.current = url;
+    streamRetryRef.current = 0;
     setCurrentTime(0);
     setDuration(0);
     setIsLoading(true);
@@ -595,20 +618,40 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const onPause = () => setIsPlaying(false);
     const onError = () => {
       const track = currentTrackRef.current;
-      if (track?.source === "youtube" && !ytFallbackRef.current) {
-        // Streaming failed (extraction error, rate limit, upstream failure) →
-        // fall back to the IFrame engine. Clear the analyser wiring too so the
-        // freshly remounted `<audio>` element doesn't inherit a dead media
-        // source chain (see the keyed element below).
-        setYtFallback(true);
-        setIsLoading(false);
-        setVizEnabled(false);
-        analyserRef.current = null;
+      if (track?.source !== "youtube" || ytFallbackRef.current) return;
+      // A transient failure (slow first byte, wedged dev server, one-off 5xx)
+      // shouldn't permanently demote the track to the IFrame animation path.
+      // Retry the native stream a bounded number of times with a short backoff
+      // before falling back.
+      if (streamRetryRef.current < MAX_STREAM_RETRIES) {
+        streamRetryRef.current += 1;
         const el = audioRef.current;
-        if (el) {
-          el.removeAttribute("src");
-          el.load();
-        }
+        const url = proxiedAudioUrl(track);
+        if (!el || !url) return;
+        const attempt = streamRetryRef.current;
+        window.setTimeout(() => {
+          if (currentTrackRef.current !== track || ytFallbackRef.current) return;
+          const retryEl = audioRef.current;
+          if (!retryEl) return;
+          setIsLoading(true);
+          retryEl.src = url;
+          retryEl.load();
+          void retryEl.play().catch(() => setIsPlaying(false));
+        }, 300 * attempt);
+        return;
+      }
+      // Streaming failed for good (extraction error, rate limit, upstream
+      // failure) → fall back to the IFrame engine. Clear the analyser wiring
+      // too so the freshly remounted `<audio>` element doesn't inherit a dead
+      // media source chain (see the keyed element below).
+      setYtFallback(true);
+      setIsLoading(false);
+      setVizEnabled(false);
+      analyserRef.current = null;
+      const el = audioRef.current;
+      if (el) {
+        el.removeAttribute("src");
+        el.load();
       }
     };
     const onEnded = () => {

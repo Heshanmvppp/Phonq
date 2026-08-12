@@ -44,11 +44,38 @@ const CACHE_WRITE_TTL_MS = 5 * 60 * 1000;
 const STATUS_THROTTLE_MS = 60 * 1000;
 const DEGRADED_WINDOW_MS = 10 * 60 * 1000;
 
+/**
+ * How long the Postgres catalog cache is considered "verified fresh" after the
+ * last successful live fetch. While fresh we serve reads straight from the DB
+ * snapshot (local, fast) instead of re-hitting the Jamendo API — this is what
+ * keeps app starts and page switches fast when the in-process memory cache is
+ * cold (idle server, fresh instance, restart). `catalogStatus.lastSuccess` is
+ * persisted, so the gate survives restarts too.
+ */
+const DB_FRESH_MS = 15 * 60 * 1000;
+
 const globalForCatalog = globalThis as unknown as {
   __phonqCacheWrites?: Map<string, number>;
   __phonqStatusAt?: number;
   __phonqDegradedUntil?: number;
 };
+
+/**
+ * Returns true when the catalog was verified live recently enough that the
+ * persisted Postgres snapshot can serve reads. Cheap: a single indexed row read.
+ */
+async function catalogFresh(): Promise<boolean> {
+  try {
+    const row = await prisma.catalogStatus.findUnique({
+      where: { id: 1 },
+      select: { lastSuccess: true },
+    });
+    if (!row?.lastSuccess) return false;
+    return Date.now() - row.lastSuccess.getTime() < DB_FRESH_MS;
+  } catch {
+    return false;
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /* Status (single-row health flag)                                     */
@@ -617,7 +644,6 @@ export async function fetchTracks(params: TracksParams = {}): Promise<Track[]> {
     subgenre: params.subgenre,
     phonkOnly: !byId,
   };
-
   try {
     if (byId) {
       const tracks = await jamendo.fetchTracks({ ids: opts.ids, limit: opts.limit });
@@ -625,11 +651,25 @@ export async function fetchTracks(params: TracksParams = {}): Promise<Track[]> {
       await writeSuccessStatus();
       return tracks;
     }
+
+    const pageSize = opts.limit ?? 24;
+
+    // Cache-first: when the catalog was verified live recently enough, serve
+    // the persisted Postgres snapshot instead of re-hitting the Jamendo API.
+    // This is what makes app starts and page switches fast when the in-memory
+    // cache is cold (idle instance, restart) — the DB snapshot is refreshed on
+    // each live verification and serves reads for the whole freshness window.
+    if (await catalogFresh()) {
+      const cached = await queryDbTracks(opts);
+      if (cached && cached.length > 0) {
+        return fillYouTubeGaps(cached, { limit: pageSize, subgenre: opts.subgenre, query: opts.search });
+      }
+    }
+
     // Over-fetch so curation (classification) can fill the requested page; the
     // offset window is applied locally after curation so pages stay aligned
     // with the same ranked, curated list.
     const start = opts.offset ?? 0;
-    const pageSize = opts.limit ?? 24;
     const tags = opts.subgenre
       ? (getSubgenre(opts.subgenre)?.jamendoTags ?? PHONK_FAMILY_QUERY_TAGS)
       : (params.tags && params.tags.length > 0 ? params.tags : PHONK_FAMILY_QUERY_TAGS);
@@ -638,17 +678,17 @@ export async function fetchTracks(params: TracksParams = {}): Promise<Track[]> {
       start + pageSize,
     );
     await writeSuccessStatus();
+
     const page = tracks.slice(start, start + pageSize);
     // Auto-insert YouTube songs to fill the window when curated Jamendo content
     // runs short; specific-id fetches (queue/favorites restoration) stay exact.
-    if (opts.ids) return page;
     return fillYouTubeGaps(page, { limit: pageSize, subgenre: opts.subgenre, query: opts.search });
   } catch (err) {
     await writeFailureStatus(err);
     const cached = await queryDbTracks(opts);
-    if (cached && cached.length > 0) return opts.ids ? cached : fillYouTubeGaps(cached, { limit: opts.limit ?? 24, subgenre: opts.subgenre, query: opts.search });
+    if (cached && cached.length > 0) return fillYouTubeGaps(cached, { limit: opts.limit ?? 24, subgenre: opts.subgenre, query: opts.search });
     const staticTracks = await queryStaticTracks(opts);
-    return opts.ids ? staticTracks : fillYouTubeGaps(staticTracks, { limit: opts.limit ?? 24, subgenre: opts.subgenre, query: opts.search });
+    return fillYouTubeGaps(staticTracks, { limit: opts.limit ?? 24, subgenre: opts.subgenre, query: opts.search });
   }
 }
 
@@ -705,39 +745,51 @@ const PHONK_RADIO_WORDS = new Set([
   "breakbeat",
 ]);
 
+function isPhonkRadio(radio: Radio): boolean {
+  return [radio.displayName, radio.name, "type" in radio ? String((radio as Radio & { type?: string }).type) : ""]
+    .join(" ")
+    .toLowerCase()
+    .split(/\s+/)
+    .some((word) => PHONK_RADIO_WORDS.has(word) || word.startsWith("phonk"));
+}
+
+async function readCachedRadios(): Promise<Radio[]> {
+  try {
+    const row = await prisma.catalogStatus.findUnique({ where: { id: 1 } });
+    const cached = row?.radios as unknown as Radio[] | undefined;
+    if (cached && Array.isArray(cached) && cached.length > 0) {
+      return cached.filter(isPhonkRadio);
+    }
+  } catch {
+    /* no database */
+  }
+  return [];
+}
+
 export async function fetchRadios(): Promise<Radio[]> {
+  if (await catalogFresh()) {
+    const cached = await readCachedRadios();
+    if (cached.length > 0) return cached;
+  }
   try {
     const radios = await jamendo.fetchRadios();
     await writeSuccessStatus(radios);
     // Keep the platform phonk-only: only surface radios that belong to the
     // curated phonk family. Fall back to the subgenre radios when none do.
-    const phonkRadios = radios.filter((radio) =>
-      [radio.displayName, radio.name, "type" in radio ? String((radio as Radio & { type?: string }).type) : ""]
-        .join(" ")
-        .toLowerCase()
-        .split(/\s+/)
-        .some((word) => PHONK_RADIO_WORDS.has(word) || word.startsWith("phonk")),
-    );
+    const phonkRadios = radios.filter(isPhonkRadio);
     return phonkRadios.length > 0 ? phonkRadios : staticRadios;
   } catch (err) {
     await writeFailureStatus(err);
-    try {
-      const row = await prisma.catalogStatus.findUnique({ where: { id: 1 } });
-      const cached = row?.radios as unknown as Radio[] | undefined;
-      if (cached && Array.isArray(cached) && cached.length > 0) {
-        const cachedPhonk = cached.filter((radio) =>
-          [radio.displayName, radio.name].join(" ").toLowerCase().includes("phonk"),
-        );
-        if (cachedPhonk.length > 0) return cachedPhonk;
-      }
-    } catch {
-      /* no database */
-    }
-    return staticRadios;
+    const cached = await readCachedRadios();
+    return cached.length > 0 ? cached : staticRadios;
   }
 }
 
 export async function fetchTrendingPhonk(limit = 24): Promise<Track[]> {
+  if (await catalogFresh()) {
+    const cached = await queryDbTracks({ limit, phonkOnly: true });
+    if (cached && cached.length > 0) return fillYouTubeGaps(cached, { limit });
+  }
   try {
     const tracks = await jamendo.fetchTrendingPhonk(Math.min(limit * 4, 100));
     await cacheTracks(tracks);
@@ -752,6 +804,10 @@ export async function fetchTrendingPhonk(limit = 24): Promise<Track[]> {
 }
 
 export async function fetchFreshDrops(limit = 24): Promise<Track[]> {
+  if (await catalogFresh()) {
+    const cached = await queryDbTracks({ limit, order: "dateadded_desc", phonkOnly: true });
+    if (cached && cached.length > 0) return fillYouTubeGaps(cached, { limit });
+  }
   try {
     const tracks = await jamendo.fetchFreshDrops(Math.min(limit * 4, 100));
     await cacheTracks(tracks);
@@ -1231,12 +1287,13 @@ interface ArtistAggregate {
 }
 
 /** Collapse a flat track list into distinct artists, counting tracks and
- * distinct albums. Used for the "browse artists" page when the live API is
- * unreachable. */
+ * distinct albums. Used for the "browse artists" page. YouTube-sourced tracks
+ * carry no Jamendo artist page, so `yt:` ids are skipped (only Jamendo artists
+ * are browsable). */
 export function aggregateArtistsFromTracks(tracks: Track[]): Artist[] {
   const byId = new Map<string, ArtistAggregate>();
   for (const t of tracks) {
-    if (!t.artistId || !t.artistName) continue;
+    if (!t.artistId || !t.artistName || t.artistId.startsWith("yt:")) continue;
     const entry = byId.get(t.artistId) ?? { name: t.artistName, image: null, tracks: 0, albums: new Set<string>() };
     entry.name = entry.name || t.artistName;
     entry.image = entry.image ?? (t.image || t.imageSmall) ?? null;
@@ -1297,60 +1354,33 @@ export function aggregateAlbumsFromTracks(tracks: Track[]): Album[] {
     .sort((a, b) => (b.nbTracks ?? 0) - (a.nbTracks ?? 0));
 }
 
-/** Popular artists for the "Browse artists" page, with the live → DB → static
- * failure ladder. */
+/** Popular artists for the "Browse artists" page.
+
+ * Artists are derived from the curated phonk track catalog (live → DB → static
+ * ladder, with YouTube fills) so the list stays phonk-only and never surfaces
+ * non-phonk Jamendo artists. This is best-effort and never throws — on a total
+ * outage it falls back to the static snapshot. */
 export async function fetchBrowseArtists(limit = 48): Promise<Artist[]> {
-  try {
-    const artists = await jamendo.fetchArtists(limit);
-    if (artists.length > 0) {
-      await writeSuccessStatus();
-      return artists;
-    }
-  } catch (err) {
-    await writeFailureStatus(err);
-  }
-
-  try {
-    const rows = await prisma.cachedTrack.findMany({
-      orderBy: { popularityWeek: "desc" },
-      take: 500,
-    });
-    if (rows.length > 0) {
-      const artists = aggregateArtistsFromTracks(rows.map(dbRowToTrack));
-      if (artists.length > 0) return artists.slice(0, limit);
-    }
-  } catch {
-    /* no database */
-  }
-
-  return aggregateArtistsFromTracks(staticTracks).slice(0, limit);
+  const tracks = await fetchTracks({
+    tags: PHONK_FAMILY_QUERY_TAGS,
+    order: "popularity_total",
+    limit: 360,
+  }).catch(() => staticTracks);
+  const source = tracks.length > 0 ? tracks : staticTracks;
+  return aggregateArtistsFromTracks(source).slice(0, limit);
 }
 
-/** Popular albums for the "Browse albums" page, with the live → DB → static
- * failure ladder. */
+/** Popular albums for the "Browse albums" page.
+
+ * Albums are derived from the curated phonk track catalog (same ladder as above)
+ * so they stay phonk-only. On total outage it falls back to the static snapshot.
+ */
 export async function fetchBrowseAlbums(limit = 48): Promise<Album[]> {
-  try {
-    const albums = await jamendo.fetchAlbums(limit);
-    if (albums.length > 0) {
-      await writeSuccessStatus();
-      return albums;
-    }
-  } catch (err) {
-    await writeFailureStatus(err);
-  }
-
-  try {
-    const rows = await prisma.cachedTrack.findMany({
-      orderBy: { popularityWeek: "desc" },
-      take: 500,
-    });
-    if (rows.length > 0) {
-      const albums = aggregateAlbumsFromTracks(rows.map(dbRowToTrack));
-      if (albums.length > 0) return albums.slice(0, limit);
-    }
-  } catch {
-    /* no database */
-  }
-
-  return aggregateAlbumsFromTracks(staticTracks).slice(0, limit);
+  const tracks = await fetchTracks({
+    tags: PHONK_FAMILY_QUERY_TAGS,
+    order: "popularity_total",
+    limit: 360,
+  }).catch(() => staticTracks);
+  const source = tracks.length > 0 ? tracks : staticTracks;
+  return aggregateAlbumsFromTracks(source).slice(0, limit);
 }

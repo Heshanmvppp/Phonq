@@ -1077,12 +1077,22 @@ export async function fetchAllCachedVideos(limit = 100): Promise<YouTubeVideo[]>
   return findAllSongs(limit);
 }
 
-/** Cached YouTube songs by their raw video ids (no API calls — DB only, with
- * the `song:{videoId}` read-through cache warmed for later single lookups). */
+/** Cached YouTube songs by their raw video ids (no API calls). Primary source
+ * is the `songs` store; videos that were resolved recently but pruned from or
+ * never written to Postgres are recovered from the `song:{videoId}` read-through
+ * cache, so saved history/favorites/playlists keep resolving. */
 export async function fetchVideosByIds(videoIds: string[]): Promise<YouTubeVideo[]> {
   const songs = await findSongsByIds(videoIds);
   for (const song of songs) cacheSetSong(song);
-  return songs;
+
+  const found = new Set(songs.map((s) => s.videoId));
+  const missing = [...new Set(videoIds.filter((id) => !found.has(id)))];
+  if (missing.length === 0) return songs;
+
+  const cached = (
+    await Promise.all(missing.map((id) => cacheGetSong(id).catch(() => null)))
+  ).filter((v): v is YouTubeVideo => v != null);
+  return [...songs, ...cached];
 }
 
 /* ------------------------------------------------------------------ */

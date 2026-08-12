@@ -26,6 +26,10 @@ interface DropdownMenuProps {
 const MENU_GAP = 8;
 const EDGE_MARGIN = 8;
 
+export function useDropdownMenu() {
+  return React.useContext(MenuContext);
+}
+
 export function DropdownMenu({ trigger, children, align = "end", className, onOpenChange }: DropdownMenuProps) {
   const [open, setOpen] = React.useState(false);
   const [closing, setClosing] = React.useState(false);
@@ -36,26 +40,47 @@ export function DropdownMenu({ trigger, children, align = "end", className, onOp
   const menuRef = React.useRef<HTMLDivElement>(null);
   const itemRefs = React.useRef<HTMLButtonElement[]>([]);
   const onOpenChangeRef = React.useRef(onOpenChange);
+  const openRef = React.useRef(false);
+  const isClosingRef = React.useRef(false);
+  const closeTimerRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
   }, [onOpenChange]);
 
+  React.useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+
+  React.useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
   const setOpenState = React.useCallback((next: boolean) => {
     if (next) {
+      if (closeTimerRef.current) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+      isClosingRef.current = false;
       setOpen(true);
       setMounted(true);
       setClosing(false);
       onOpenChangeRef.current?.(true);
     } else {
+      if (!openRef.current || isClosingRef.current) return;
+      isClosingRef.current = true;
       setClosing(true);
       onOpenChangeRef.current?.(false);
-      const id = window.setTimeout(() => {
+      closeTimerRef.current = window.setTimeout(() => {
+        closeTimerRef.current = null;
+        isClosingRef.current = false;
         setOpen(false);
         setMounted(false);
         setClosing(false);
       }, 150);
-      return () => window.clearTimeout(id);
     }
   }, []);
 

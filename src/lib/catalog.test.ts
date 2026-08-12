@@ -12,8 +12,6 @@ const mocks = vi.hoisted(() => ({
     fetchTracksByArtist: vi.fn(),
     fetchAlbum: vi.fn(),
     fetchTracksByAlbum: vi.fn(),
-    fetchArtists: vi.fn(),
-    fetchAlbums: vi.fn(),
     fetchRadios: vi.fn(),
     fetchTrendingPhonk: vi.fn(),
     fetchFreshDrops: vi.fn(),
@@ -600,18 +598,22 @@ describe("artist & album pages", () => {
       (globalThis as { __phonqStatusAt?: number; __phonqDegradedUntil?: number }).__phonqDegradedUntil = 0;
     });
 
-    it("fetchBrowseArtists serves the live artists list", async () => {
-      vi.mocked(jamendo.fetchArtists).mockResolvedValue([
-        { id: "9", name: "MC Drift", image: "img", imageSmall: "small", website: null, location: null, joindate: null, nbTracks: 12, nbAlbums: 2, nbFans: 100, bio: null },
+    it("fetchBrowseArtists aggregates phonk artists (live track catalog)", async () => {
+      vi.mocked(jamendo.fetchTracks).mockResolvedValue([
+        track({ id: "t1", artistId: "9", artistName: "MC Drift", albumId: "5", subgenre: "drift" }),
+        track({ id: "t2", artistId: "9", artistName: "MC Drift", albumId: "5", subgenre: "drift" }),
+        track({ id: "t3", artistId: "yt:chan", artistName: "YT Channel", subgenre: "drift" }),
       ]);
 
       const artists = await fetchBrowseArtists(48);
-      expect(artists.map((a) => a.name)).toEqual(["MC Drift"]);
+      // YT-sourced artist ids are not browsable; "MC Drift" is merged and ranked.
+      expect(artists.map((a) => a.id)).toEqual(["9"]);
+      expect(artists[0].nbTracks).toBe(2);
       expect(mocks.prisma.catalogStatus.upsert).toHaveBeenCalled();
     });
 
-    it("fetchBrowseArtists aggregates from the static snapshot when live and DB are down", async () => {
-      vi.mocked(jamendo.fetchArtists).mockRejectedValue(new Error("down"));
+    it("fetchBrowseArtists falls back to the static snapshot when live and DB are down", async () => {
+      vi.mocked(jamendo.fetchTracks).mockRejectedValue(new Error("down"));
       mocks.prisma.cachedTrack.findMany.mockRejectedValue(new Error("no database"));
 
       const artists = await fetchBrowseArtists(48);
@@ -620,17 +622,21 @@ describe("artist & album pages", () => {
       expect(artists.every((a) => a.id && a.name)).toBe(true);
     });
 
-    it("fetchBrowseAlbums serves the live albums list", async () => {
-      vi.mocked(jamendo.fetchAlbums).mockResolvedValue([
-        { id: "5", name: "Night Drive", artistId: "1", artistName: "DJ Phantom", image: "img", imageSmall: "small", releaseDate: "2024-01-01", nbTracks: 10 },
+    it("fetchBrowseAlbums aggregates phonk albums (live track catalog)", async () => {
+      vi.mocked(jamendo.fetchTracks).mockResolvedValue([
+        track({ id: "t1", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", subgenre: "drift", image: "img" }),
+        track({ id: "t2", artistId: "1", artistName: "DJ Phantom", albumId: "5", albumName: "Night Drive", subgenre: "drift" }),
+        track({ id: "t3", artistId: "2", artistName: "Other", albumId: "", subgenre: "drift" }),
       ]);
 
       const albums = await fetchBrowseAlbums(48);
-      expect(albums.map((a) => a.name)).toEqual(["Night Drive"]);
+      expect(albums.map((a) => a.id)).toEqual(["5"]);
+      expect(albums[0].nbTracks).toBe(2);
+      expect(albums[0].artistName).toBe("DJ Phantom");
     });
 
-    it("fetchBrowseAlbums aggregates from the static snapshot when live and DB are down", async () => {
-      vi.mocked(jamendo.fetchAlbums).mockRejectedValue(new Error("down"));
+    it("fetchBrowseAlbums falls back to the static snapshot when live and DB are down", async () => {
+      vi.mocked(jamendo.fetchTracks).mockRejectedValue(new Error("down"));
       mocks.prisma.cachedTrack.findMany.mockRejectedValue(new Error("no database"));
 
       const albums = await fetchBrowseAlbums(48);

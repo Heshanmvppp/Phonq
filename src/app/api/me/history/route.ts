@@ -1,14 +1,31 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
+import { touchLastPlayed, upsertSong } from "@/lib/youtube-db";
+
 import { badRequest, ok, unauthorized } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
+
+/** Minimal YouTube metadata sent by the player on playback. */
+interface YoutubePlaybackMeta {
+  videoId?: string;
+  title?: string;
+  artist?: string;
+  durationSec?: number;
+  channelId?: string | null;
+  channelTitle?: string | null;
+}
 
 /**
  * Reports that the signed-in user listened to a track.
  * The player calls this once per track (deduped client-side by track id).
  * We store one row per (user, track), updating progress and timestamps.
+ *
+ * For YouTube tracks the video is upserted into the `songs` catalog on
+ * playback (best-effort, fire-and-forget) and its `lastPlayedAt` touched, so a
+ * played video survives pruning and always resolves on read-back even when it
+ * only ever existed in the Redis hot cache.
  */
 export async function POST(request: Request) {
   const session = await auth();
@@ -18,6 +35,7 @@ export async function POST(request: Request) {
     trackId?: string;
     progress?: number;
     completed?: boolean;
+    youtube?: YoutubePlaybackMeta;
   };
   if (!body.trackId) return badRequest("trackId is required");
 
@@ -41,6 +59,25 @@ export async function POST(request: Request) {
     await prisma.listen.create({
       data: { userId: session.user.id, trackId: body.trackId, progress, completed },
     });
+  }
+
+  // Keep played YouTube videos resolvable (see the comment above).
+  const yt = body.trackId.startsWith("yt:") ? body.youtube : undefined;
+  if (yt?.videoId) {
+    void upsertSong({
+      videoId: yt.videoId,
+      title: yt.title ?? `Phonq track ${yt.videoId}`,
+      artist: yt.artist ?? "Unknown Artist",
+      channelId: yt.channelId ?? null,
+      channelTitle: yt.channelTitle ?? yt.artist ?? null,
+      durationSec: Math.max(0, Math.round(Number(yt.durationSec) || 0)),
+      genreTag: null,
+      qualityScore: 30,
+      embedStatus: true,
+      source: "search",
+      lastPlayedAt: new Date(),
+    }).catch(() => undefined);
+    void touchLastPlayed(yt.videoId).catch(() => undefined);
   }
 
   return ok({ recorded: true });

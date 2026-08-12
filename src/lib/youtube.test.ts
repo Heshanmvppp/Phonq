@@ -54,6 +54,7 @@ vi.mock("@/lib/youtube-db", () => dbMock);
 import {
   fetchGenreVideos,
   fetchQueryVideos,
+  fetchVideosByIds,
   isoDurationToSeconds,
   isBlacklistedTitle,
   isDeprioritizedTitle,
@@ -554,5 +555,59 @@ describe("resolveSongVideo", () => {
     expect(video).toBeNull();
     expect(redisMock.ytRedis.cacheSet).toHaveBeenCalledWith(expect.stringMatching(/^neg:/), "1", NEG_CACHE_TTL);
     expect(dbMock.upsertSong).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchVideosByIds", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns DB rows and warms the song cache", async () => {
+    dbMock.findSongsByIds.mockResolvedValue([
+      {
+        videoId: "db1",
+        title: "Envolver",
+        artistName: "Anitta",
+        duration: 200,
+        thumbnail: "https://i.ytimg.com/vi/db1/hqdefault.jpg",
+        channelId: "c1",
+        channelTitle: "Anitta - Topic",
+        embeddable: true,
+        subgenre: "brazilian",
+        source: "search",
+      } as never,
+    ]);
+
+    const videos = await fetchVideosByIds(["db1", "missing1"]);
+    expect(videos.map((v) => v.videoId)).toEqual(["db1"]);
+    expect(dbMock.findSongsByIds).toHaveBeenCalledWith(["db1", "missing1"]);
+    expect(redisMock.ytRedis.cacheSet).toHaveBeenCalledWith("song:db1", expect.any(Object), SONG_CACHE_TTL);
+  });
+
+  it("recovers videos that only exist in the Redis read-through cache", async () => {
+    dbMock.findSongsByIds.mockResolvedValue([]);
+    redisMock.ytRedis.cacheGet.mockImplementation(async (k: string) =>
+      k === "song:ytcached1"
+        ? {
+            videoId: "ytcached1",
+            title: "Cached Banger",
+            artistName: "Cache Artist",
+            duration: 180,
+            channelId: "c9",
+            channelTitle: "Cache Artist - Topic",
+            embeddable: true,
+            subgenre: "drift",
+            source: "search",
+          }
+        : null,
+    );
+
+    const videos = await fetchVideosByIds(["ytcached1", "nowhere"]);
+    const ids = videos.map((v) => v.videoId);
+    expect(ids).toContain("ytcached1");
+    expect(ids).not.toContain("nowhere");
+    expect(videos.find((v) => v.videoId === "ytcached1")?.title).toBe("Cached Banger");
+    expect(dbMock.findSongsByIds).toHaveBeenCalledWith(["ytcached1", "nowhere"]);
   });
 });
