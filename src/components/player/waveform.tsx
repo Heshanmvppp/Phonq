@@ -59,10 +59,13 @@ export function Waveform({ className }: { className?: string }) {
         analyser.getByteFrequencyData(frequency);
         values = Array.from(frequency);
       } else {
-        const t = Date.now() / 300;
-        values = Array.from({ length: BAR_COUNT }, (_, i) => {
-          const v = Math.sin(t + i * 0.55) * 0.5 + 0.5;
-          return (Math.pow(v, 4) * 0.5 + 0.12) * 255;
+        // No live analyser data — e.g. a YouTube track whose native stream fell
+        // back to the cross-origin IFrame engine and can't be inspected. Render a
+        // stable, analyzed-style profile so the bar visually matches the live
+        // frequency waveform of Jamendo tracks instead of an animated placeholder.
+        values = Array.from({ length: 64 }, (_, i) => {
+          const curve = Math.sin((i / 63) * Math.PI) * 0.5 + 0.5;
+          return (Math.pow(curve, 1.6) * 0.65 + 0.18) * 255;
         });
       }
 
