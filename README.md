@@ -1,6 +1,6 @@
-# 🎵 Phonq — The free home of phonk
+# Phonq — The free home of phonk
 
-<div align="center">
+![Logo](/src/app/icon.svg)
 
 [![MIT License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/hexsyro/Phonq/ci.yml?label=CI&style=flat-square)](https://github.com/hexsyro/Phonq/actions)
@@ -9,40 +9,40 @@
 [![Neon](https://img.shields.io/badge/DB-Neon%20Postgres-00e599?style=flat-square)](https://neon.tech)
 [![Discussions](https://img.shields.io/badge/Discussions-open-8a63d2?style=flat-square)](https://github.com/hexsyro/Phonq/discussions)
 
-Phonq is a free, open-source music streaming platform built for the **phonk** community.
-Stream hundreds of thousands of **Creative Commons** tracks — legally, in full, forever free.
-
-</div>
+Phonq is a free, open-source music streaming platform built for the phonk community.
+Stream hundreds of thousands of Creative Commons tracks — legally, in full, forever free.
 
 ---
 
-## ✨ What is Phonq?
+## What is Phonq?
 
-Phonq streams the entire **Jamendo** catalog (500K+ CC-licensed tracks) with:
+Phonq streams the entire Jamendo catalog (500K+ CC-licensed tracks) with:
 
-- 🎧 **A real music player** — full-length streaming, a live waveform visualizer (Web Audio API), a persistent queue with drag-to-reorder, shuffle, repeat and volume control
-- 🔥 **Live discovery** — trending phonk charts and fresh drops straight from the API, plus genre radios
-- 🔍 **Full-catalog search** — tracks, artists, albums, tags and BPM
-- ❤️ **Your library** — favorites, playlists and listening history that sync across devices via **Google OAuth 2.0**
-- 🆑 **Artist & album pages** — full discographies, bios, similar-artists recommendations and album metadata (cover art, release date) built from a live → DB → static failure ladder
-- 🎯 **Personalized recommendations** — tracks surfaced from your listening history, favorite subgenres and similar artists
-- 🆓 **Zero ads, zero paywalls** — and legally free downloads where the artist allows
+- **A real music player** — full-length streaming, a live waveform visualizer (Web Audio API), a persistent queue with drag-to-reorder, shuffle, repeat and volume control
+- **Live discovery** — trending phonk charts and fresh drops straight from the API, plus genre radios
+- **Full-catalog search** — tracks, artists, albums, tags and BPM
+- **Your library** — favorites, playlists and listening history that sync across devices via Google OAuth 2.0
+- **Artist and album pages** — full discographies, bios, similar-artists recommendations and album metadata (cover art, release date) built from a live to DB to static fallback
+- **Personalized recommendations** — tracks surfaced from your listening history, favorite subgenres and similar artists
+- **Zero ads, zero paywalls** — and legally free downloads where the artist allows
 
-And it's **100% open source** under the MIT license. Fork it, audit it, self-host it, or build on it.
+And it's 100% open source under the MIT license. Fork it, audit it, self-host it, or build on it.
 
-## 📸 Screenshots
+---
 
-> The gallery below is filled with real captures from the player. Drop your own
-> `docs/screenshots/*.png` in and link them here.
+## Screenshots
 
-| Player + waveform | Search & library |
+The gallery below is filled with real captures from the App. Drop your own
+`docs/screenshots/*.png` in and link them here.
+
+| The App | Landing Page |
 | ----------------- | ---------------- |
-| ![Player](./docs/screenshots/player.png) | ![Search](./docs/screenshots/search.png) |
+| ![App](./docs/screenshots/app.png) | ![Landing Page](./docs/screenshots/landing.png) |
 
-> _Short GIFs of the live waveform / queue help too — see
-> [Contributing → Screenshots](CONTRIBUTING.md)._
+> Short GIFs of the live waveform / queue help too — see
+> [Contributing → Screenshots](CONTRIBUTING.md).
 
-## 🚀 Tech Stack
+## Tech Stack
 
 | Layer     | Technology                                                        |
 | --------- | ----------------------------------------------------------------- |
@@ -55,7 +55,7 @@ And it's **100% open source** under the MIT license. Fork it, audit it, self-hos
 | Deploy    | Vercel (serverless, ready) + Docker for self-hosting               |
 | Testing   | Vitest (unit + API route tests)                                    |
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 phonq/
@@ -80,14 +80,14 @@ phonq/
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical design.
 
-## 🧰 Prerequisites
+## Prerequisites
 
 - Node.js 20+ (built and tested on 24)
 - A free [Neon](https://neon.tech) PostgreSQL database
 - A free [Jamendo client_id](https://devportal.jamendo.com) (register an app)
 - A [Google OAuth](https://console.cloud.google.com/apis/credentials) client ID + secret
 
-## ⚙️ Setup
+## Setup
 
 ```bash
 # 1. Install dependencies
@@ -117,7 +117,7 @@ npm run dev          # → http://localhost:3000
 > cached in Postgres (`youtube_video_mappings`), so the 100 searches/day free budget lasts
 > indefinitely once the catalog is seeded. See [.env.example](.env.example).
 
-## 📦 Scripts
+## Scripts
 
 | Script                | Description                            |
 | --------------------- | -------------------------------------- |
@@ -133,7 +133,7 @@ npm run dev          # → http://localhost:3000
 | `npm run db:deploy`   | `prisma migrate deploy`                |
 | `npm run db:studio`   | Open Prisma Studio                     |
 
-## 🐳 Self-hosting with Docker
+## Self-hosting with Docker
 
 The repo ships a `docker-compose.yml` that runs the app with a local Postgres — no
 Neon, no cloud, no cost:
@@ -145,9 +145,9 @@ docker compose up --build
 ```
 
 The first boot runs the migrations automatically and seeds the schema. See
-[.env.example](.env.example) for every variable.
+ [.env.example](.env.example) for every variable.
 
-## ☁️ Deploying to Vercel
+## Deploying to Vercel
 
 One-click deploy (prompts for the same env vars documented below):
 
@@ -159,7 +159,7 @@ Or manually:
 2. Add the same env vars as `.env` in **Project → Settings → Environment Variables**.
 3. Deploy. Run `npx prisma migrate deploy` once (via a Vercel build step or locally) to create the tables.
 
-## 💜 How this stays free
+## How this stays free
 
 Phonq runs on free tiers and stays free forever:
 
@@ -172,7 +172,7 @@ Phonq runs on free tiers and stays free forever:
 
 [![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?style=flat-square)](https://github.com/sponsors/hexsyro)
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome — docs, translations, bug fixes, features. See
 [CONTRIBUTING.md](CONTRIBUTING.md), the [Code of Conduct](CODE_OF_CONDUCT.md), and
@@ -188,13 +188,11 @@ npm run lint && npm run typecheck && npm test
 Questions and ideas are welcome on
 [GitHub Discussions](https://github.com/hexsyro/Phonq/discussions).
 
-## 📄 License
+## License
 
 MIT — see [LICENSE](LICENSE). Music is licensed by its artists under Creative Commons via
 [Jamendo](https://www.jamendo.com); Phonq does not own the catalog.
 
 ---
 
-<div align="center">
-  <i>Built with ❤️ for the phonk community · <a href="https://github.com/hexsyro">@hexsyro</a></i>
-</div>
+<center><i>Built with ❤️ for the phonk community · <a href="https://github.com/hexsyro">@hexsyro</a></i></center>
