@@ -1,6 +1,5 @@
 # Phonq — The free home of phonk
 
-![Logo](/src/app/icon.svg)
 
 [![MIT License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/hexsyro/Phonq/ci.yml?label=CI&style=flat-square)](https://github.com/hexsyro/Phonq/actions)
